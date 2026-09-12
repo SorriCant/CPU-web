@@ -288,9 +288,22 @@ private struct NativeQuickEntryView: View {
                         }.padding(12).background(Color.primary.opacity(0.045)).clipShape(RoundedRectangle(cornerRadius: 14))
                     }
                 }.padding(18)
-            }.scrollIndicators(.hidden).navigationTitle("快捷入口").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { onOpen(nil, nil) } } }
+            }
+            .scrollIndicators(.hidden)
+            .navigationTitle("快捷入口")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { onOpen(nil, nil) }
+                }
+            }
         }
+        // SwiftUI may keep a presented sheet's environment snapshot while its
+        // parent changes color scheme. The identity follows the selected mode
+        // so the menu repaints immediately after a tap.
+        .id("quick-entry-\(session.appearanceMode)")
+        .preferredColorScheme(session.pageColorScheme)
+        .animation(.easeInOut(duration: 0.18), value: session.appearanceMode)
     }
 
     @ViewBuilder

@@ -222,6 +222,13 @@ struct NativeScheduleView: View {
                 }
             }
 
+            // Web's day view keeps the week navigator and the seven-day strip
+            // as separate controls. The strip is the compact day selector;
+            // the grid below can therefore start directly at the first slot.
+            if viewMode == .day {
+                dayPicker(result)
+            }
+
         }
     }
 
@@ -350,12 +357,16 @@ struct NativeScheduleView: View {
                         days: [page.day],
                         columnWidth: columnWidth,
                         compactCards: false,
-                        rowHeight: NativeScheduleDayColumn.daySlotHeight
+                        rowHeight: NativeScheduleDayColumn.daySlotHeight,
+                        showsDateHeader: false
                     )
                     .frame(width: proxy.size.width, alignment: .leading)
                 }
             }
-            .frame(height: Self.scheduleGridHeight(rowHeight: NativeScheduleDayColumn.daySlotHeight))
+            .frame(height: Self.scheduleGridHeight(
+                rowHeight: NativeScheduleDayColumn.daySlotHeight,
+                includesDateHeader: false
+            ))
         }
     }
 
@@ -592,10 +603,11 @@ struct NativeScheduleView: View {
         days: [Int],
         columnWidth: CGFloat,
         compactCards: Bool,
-        rowHeight: CGFloat = NativeScheduleDayColumn.slotHeight
+        rowHeight: CGFloat = NativeScheduleDayColumn.slotHeight,
+        showsDateHeader: Bool = true
     ) -> some View {
         HStack(alignment: .top, spacing: Self.columnGap) {
-            slotAxis(rowHeight: rowHeight)
+            slotAxis(rowHeight: rowHeight, showsHeader: showsDateHeader)
 
             ForEach(days, id: \.self) { day in
                 NativeScheduleDayColumn(
@@ -605,6 +617,7 @@ struct NativeScheduleView: View {
                     columnWidth: columnWidth,
                     rowHeight: rowHeight,
                     compactCards: compactCards,
+                    showsDateHeader: showsDateHeader,
                     blocks: blocks(for: day, week: week, result: result),
                     onCourseSelected: { block in
                         selectedCourse = SelectedCourse(
@@ -624,12 +637,17 @@ struct NativeScheduleView: View {
         .padding(.bottom, 4)
     }
 
-    private func slotAxis(rowHeight: CGFloat = NativeScheduleDayColumn.slotHeight) -> some View {
+    private func slotAxis(
+        rowHeight: CGFloat = NativeScheduleDayColumn.slotHeight,
+        showsHeader: Bool = true
+    ) -> some View {
         VStack(spacing: 0) {
-            Text("节次")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: Self.slotAxisWidth, height: NativeScheduleDayColumn.dateHeaderHeight)
+            if showsHeader {
+                Text("节次")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: Self.slotAxisWidth, height: NativeScheduleDayColumn.dateHeaderHeight)
+            }
 
             VStack(spacing: NativeScheduleDayColumn.slotGap) {
                 ForEach(ScheduleSlot.all, id: \.number) { slot in
@@ -697,6 +715,7 @@ struct NativeScheduleView: View {
                             columnWidth: max(1, (proxy.size.width - Self.slotAxisWidth) / 7),
                             rowHeight: NativeScheduleDayColumn.slotHeight,
                             compactCards: true,
+                            showsDateHeader: true,
                             blocks: [],
                             onCourseSelected: { _ in },
                             onEmptySlot: { _ in }
@@ -1095,8 +1114,11 @@ struct NativeScheduleView: View {
 
     /// Eleven teaching slots plus the date header, sized to keep a complete
     /// day visible above the native tab bar on an iPhone-sized surface.
-    private static func scheduleGridHeight(rowHeight: CGFloat = NativeScheduleDayColumn.slotHeight) -> CGFloat {
-        NativeScheduleDayColumn.dateHeaderHeight
+    private static func scheduleGridHeight(
+        rowHeight: CGFloat = NativeScheduleDayColumn.slotHeight,
+        includesDateHeader: Bool = true
+    ) -> CGFloat {
+        (includesDateHeader ? NativeScheduleDayColumn.dateHeaderHeight : 0)
             + CGFloat(ScheduleSlot.all.count) * rowHeight
             + CGFloat(max(0, ScheduleSlot.all.count - 1)) * NativeScheduleDayColumn.slotGap
     }
@@ -1231,6 +1253,7 @@ private struct NativeScheduleDayColumn: View {
     let columnWidth: CGFloat
     let rowHeight: CGFloat
     let compactCards: Bool
+    let showsDateHeader: Bool
     let blocks: [NativeScheduleCourseBlock]
     let onCourseSelected: (NativeScheduleCourseBlock) -> Void
     let onEmptySlot: (Int) -> Void
@@ -1241,27 +1264,29 @@ private struct NativeScheduleDayColumn: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(spacing: 2) {
-                Text(dayLabel)
-                    .font(.caption.weight(.semibold))
-                Text(dateText ?? "--")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(width: columnWidth, height: Self.dateHeaderHeight)
-            .background {
-                if isToday {
-                    ScheduleGlassBackground(
-                        cornerRadius: 12,
-                        colors: [
-                            Color(hue: 0.43, saturation: 0.22, brightness: 0.92).opacity(0.12),
-                            Color(hue: 0.59, saturation: 0.20, brightness: 0.96).opacity(0.10),
-                            Color(hue: 0.89, saturation: 0.18, brightness: 0.96).opacity(0.12),
-                        ],
-                        border: Color.accentColor.opacity(0.22)
-                    )
-                        .padding(.horizontal, 2)
-                        .padding(.vertical, 3)
+            if showsDateHeader {
+                VStack(spacing: 2) {
+                    Text(dayLabel)
+                        .font(.caption.weight(.semibold))
+                    Text(dateText ?? "--")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(width: columnWidth, height: Self.dateHeaderHeight)
+                .background {
+                    if isToday {
+                        ScheduleGlassBackground(
+                            cornerRadius: 12,
+                            colors: [
+                                Color(hue: 0.43, saturation: 0.22, brightness: 0.92).opacity(0.12),
+                                Color(hue: 0.59, saturation: 0.20, brightness: 0.96).opacity(0.10),
+                                Color(hue: 0.89, saturation: 0.18, brightness: 0.96).opacity(0.12),
+                            ],
+                            border: Color.accentColor.opacity(0.22)
+                        )
+                            .padding(.horizontal, 2)
+                            .padding(.vertical, 3)
+                    }
                 }
             }
 
