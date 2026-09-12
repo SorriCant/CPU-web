@@ -132,7 +132,7 @@ struct NativeScheduleView: View {
     }
 
     private func scheduleHeader(_ result: NativeScheduleResult) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: viewMode == .day ? 8 : 12) {
             HStack(alignment: .center, spacing: 10) {
                 semesterMenu(result)
 
@@ -292,10 +292,7 @@ struct NativeScheduleView: View {
     }
 
     private func dayPicker(_ result: NativeScheduleResult) -> some View {
-        LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(minimum: 0), spacing: 4), count: 7),
-            spacing: 4
-        ) {
+        HStack(spacing: 2) {
             ForEach(1...7, id: \.self) { day in
                 Button {
                     selectedDay = day
@@ -311,18 +308,27 @@ struct NativeScheduleView: View {
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 46)
-                    .modifier(ScheduleGlassControl(
-                        cornerRadius: 10,
-                        tint: selectedDay == day ? Color.accentColor.opacity(0.12) : nil
-                    ))
+                    .frame(maxWidth: .infinity, minHeight: 36)
+                    .background {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(selectedDay == day ? Color.accentColor.opacity(0.14) : .clear)
+                            .overlay {
+                                if dayIsToday(day, result: result) && selectedDay != day {
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .strokeBorder(Color.accentColor.opacity(0.42), lineWidth: 0.8)
+                                }
+                            }
+                    }
                     .foregroundStyle(selectedDay == day ? Color.accentColor : .primary)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("\(dayLabel(day)) \(dayDate(day, result: result) ?? "")")
             }
         }
+        .padding(3)
+        .modifier(ScheduleGlassControl(cornerRadius: 12, interactive: false))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func weekGrid(_ result: NativeScheduleResult) -> some View {
