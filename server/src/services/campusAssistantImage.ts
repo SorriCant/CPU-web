@@ -6,8 +6,8 @@ import { saveMediaAsset } from "./mediaStorage";
 import { isLocalOrPrivateHost } from "../utils/officePreview";
 
 // The product-facing feature is called image2; the configured upstream model
-// id is image2.5.
-export const CAMPUS_ASSISTANT_IMAGE_MODEL = "image2.5";
+// id is gpt-image-2.5.
+export const CAMPUS_ASSISTANT_IMAGE_MODEL = "gpt-image-2.5";
 const DEFAULT_AI_CHAT_ENDPOINT = "https://api.openai.com/v1/chat/completions";
 const CAMPUS_ASSISTANT_IMAGE_TIMEOUT_MS = 180_000;
 
