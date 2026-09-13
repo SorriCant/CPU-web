@@ -43,14 +43,22 @@ final class WatchSessionTransport: NSObject, ScheduleTransport, WCSessionDelegat
         guard connection.paired else { throw ScheduleFailure.notPaired }
         guard connection.installed else { throw ScheduleFailure.notInstalled }
         guard data.count <= ScheduleEnvelope.maximumBytes else { throw ScheduleFailure.invalidData }
-        do { try session.updateApplicationContext(["schemaVersion": 1, "schedule": data]) }
+        do {
+            try session.updateApplicationContext([
+                ScheduleWireProtocol.Key.schemaVersion: ScheduleWireProtocol.schemaVersion,
+                ScheduleWireProtocol.Key.schedule: data,
+            ])
+        }
         catch { throw ScheduleFailure.syncFailed }
     }
 
     func updateStatus(_ failure: ScheduleFailure, snapshot: Data?) throws {
         guard let session, connection.activated else { throw ScheduleFailure.notActivated }
-        var context: [String: Any] = ["schemaVersion": 1, "status": failure.rawValue]
-        if let snapshot { context["schedule"] = snapshot }
+        var context: [String: Any] = [
+            ScheduleWireProtocol.Key.schemaVersion: ScheduleWireProtocol.schemaVersion,
+            ScheduleWireProtocol.Key.status: failure.rawValue,
+        ]
+        if let snapshot { context[ScheduleWireProtocol.Key.schedule] = snapshot }
         do { try session.updateApplicationContext(context) }
         catch { throw ScheduleFailure.syncFailed }
     }
@@ -59,8 +67,11 @@ final class WatchSessionTransport: NSObject, ScheduleTransport, WCSessionDelegat
         guard let session, connection.activated else { completion(.failure(.notActivated)); return }
         guard connection.installed else { completion(.failure(.notInstalled)); return }
         guard connection.reachable else { completion(.failure(.unavailable)); return }
-        session.sendMessage(["schemaVersion": 1, "messageType": "schedule.refresh"], replyHandler: { reply in
-            let accepted = reply["accepted"] as? Bool == true
+        session.sendMessage([
+            ScheduleWireProtocol.Key.schemaVersion: ScheduleWireProtocol.schemaVersion,
+            ScheduleWireProtocol.Key.messageType: ScheduleWireProtocol.MessageType.refresh,
+        ], replyHandler: { reply in
+            let accepted = reply[ScheduleWireProtocol.Key.accepted] as? Bool == true
             Task { @MainActor in completion(accepted ? .success(()) : .failure(.syncFailed)) }
         }, errorHandler: { _ in
             Task { @MainActor in completion(.failure(.syncFailed)) }
@@ -70,9 +81,12 @@ final class WatchSessionTransport: NSObject, ScheduleTransport, WCSessionDelegat
     private func receive(_ context: [String: Any]) {
         #if os(watchOS)
         guard !context.isEmpty else { return }
-        guard context["schemaVersion"] as? Int == 1 else { onError?(.unsupportedVersion); return }
-        let status = (context["status"] as? String).flatMap(ScheduleFailure.init(rawValue:))
-        guard let data = context["schedule"] as? Data else {
+        guard context[ScheduleWireProtocol.Key.schemaVersion] as? Int == ScheduleWireProtocol.schemaVersion else {
+            onError?(.unsupportedVersion)
+            return
+        }
+        let status = (context[ScheduleWireProtocol.Key.status] as? String).flatMap(ScheduleFailure.init(rawValue:))
+        guard let data = context[ScheduleWireProtocol.Key.schedule] as? Data else {
             if status == .loginRequired { onClear?() }
             onError?(status ?? .invalidData)
             return
@@ -85,18 +99,20 @@ final class WatchSessionTransport: NSObject, ScheduleTransport, WCSessionDelegat
             if receiptDeduplicator.shouldSend(fingerprint) {
                 // The reverse application context persists the receipt while the phone is offline.
                 try session?.updateApplicationContext([
-                    "schemaVersion": 1, "messageType": "schedule.receipt",
-                    "snapshotID": fingerprint, "receivedAt": Date.now.timeIntervalSince1970,
+                    ScheduleWireProtocol.Key.schemaVersion: ScheduleWireProtocol.schemaVersion,
+                    ScheduleWireProtocol.Key.messageType: ScheduleWireProtocol.MessageType.receipt,
+                    ScheduleWireProtocol.Key.snapshotID: fingerprint,
+                    ScheduleWireProtocol.Key.receivedAt: Date.now.timeIntervalSince1970,
                 ])
                 receiptDeduplicator.markSent(fingerprint)
             }
             if let status { onError?(status) }
         } catch { onError?(error as? ScheduleFailure ?? .syncFailed) }
         #else
-        guard context["schemaVersion"] as? Int == 1,
-              context["messageType"] as? String == "schedule.receipt",
-              let fingerprint = context["snapshotID"] as? String, fingerprint.count == 64,
-              let time = context["receivedAt"] as? Double, time.isFinite else { return }
+        guard context[ScheduleWireProtocol.Key.schemaVersion] as? Int == ScheduleWireProtocol.schemaVersion,
+              context[ScheduleWireProtocol.Key.messageType] as? String == ScheduleWireProtocol.MessageType.receipt,
+              let fingerprint = context[ScheduleWireProtocol.Key.snapshotID] as? String, fingerprint.count == 64,
+              let time = context[ScheduleWireProtocol.Key.receivedAt] as? Double, time.isFinite else { return }
         onAcknowledgement?(fingerprint, Date(timeIntervalSince1970: time))
         #endif
     }
@@ -120,12 +136,13 @@ final class WatchSessionTransport: NSObject, ScheduleTransport, WCSessionDelegat
     }
 
     nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any], replyHandler: @escaping ([String: Any]) -> Void) {
-        let valid = message["schemaVersion"] as? Int == 1 && message["messageType"] as? String == "schedule.refresh"
+        let valid = message[ScheduleWireProtocol.Key.schemaVersion] as? Int == ScheduleWireProtocol.schemaVersion
+            && message[ScheduleWireProtocol.Key.messageType] as? String == ScheduleWireProtocol.MessageType.refresh
         #if os(iOS)
-        replyHandler(["accepted": valid]) // Acknowledges the request, not completion of a network refresh.
+        replyHandler([ScheduleWireProtocol.Key.accepted: valid]) // Acknowledges the request, not completion of a network refresh.
         if valid { Task { @MainActor [weak self] in self?.onRefreshRequest?() } }
         #else
-        replyHandler(["accepted": false])
+        replyHandler([ScheduleWireProtocol.Key.accepted: false])
         #endif
     }
 

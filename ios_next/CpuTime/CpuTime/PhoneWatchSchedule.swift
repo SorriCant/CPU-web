@@ -221,11 +221,15 @@ private extension NativeScheduleSnapshot {
             endDate: semesterEnd,
             weekCount: calendarWeeks.count
         )
-        let currentWeek = Self.currentWeek(at: fetchedAt, semesterStart: semesterStart,
-                                           semesterEnd: semesterEnd, timezone: timezone)
+        let currentWeek = ScheduleEnvelope.teachingWeek(
+            at: fetchedAt,
+            semesterStart: semesterStart,
+            semesterEnd: semesterEnd,
+            timezone: timezone
+        )
         return ScheduleEnvelope(
             schemaVersion: ScheduleEnvelope.currentVersion,
-            messageType: "schedule.snapshot",
+            messageType: ScheduleWireProtocol.MessageType.snapshot,
             generatedAt: fetchedAt,
             semester: semester,
             timezone: timezone,
@@ -236,19 +240,4 @@ private extension NativeScheduleSnapshot {
         )
     }
 
-    static func currentWeek(at date: Date, semesterStart: String, semesterEnd: String,
-                            timezone: String) -> Int {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: timezone) ?? .gmt
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.calendar = calendar
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "yyyy-MM-dd"
-        guard let start = formatter.date(from: semesterStart),
-              let end = formatter.date(from: semesterEnd) else { return 0 }
-        let day = calendar.startOfDay(for: date)
-        guard day >= start, day <= end else { return 0 }
-        return (calendar.dateComponents([.day], from: start, to: day).day ?? 0) / 7 + 1
-    }
 }

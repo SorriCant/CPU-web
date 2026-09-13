@@ -6,8 +6,8 @@ import WebKit
 
 
 enum IOSNextWebConfiguration {
-    static let versionCode = 1
-    static let versionName = "1.0.0"
+    static let versionCode = 2
+    static let versionName = "2.0.0"
 
     static var appURL: URL {
         let configured = Bundle.main.object(forInfoDictionaryKey: "CPUAppURL") as? String
@@ -64,12 +64,39 @@ final class HybridWebViewStore: NSObject, ObservableObject, WKScriptMessageHandl
     @Published private(set) var isLoading = true
     @Published private(set) var canGoBack = false
     @Published private(set) var errorMessage: String?
-    /// The Web top bar owns the appearance switch and the native timetable is
-    /// on screen before the WebView finishes loading, so the last reported mode
-    /// is cached: a cold start must not flash the wrong scheme first.
+    /// Cache the Web appearance so the native shell has the right scheme on a
+    /// cold start, before the shared WebView finishes loading.
     @Published private(set) var pageColorScheme: ColorScheme? = HybridWebViewStore.storedAppearanceScheme()
+    @Published private(set) var appearanceMode: String = UserDefaults.standard.string(forKey: HybridWebViewStore.appearanceModeKey) ?? "system"
+    @Published private(set) var isLoggedIn = false
+
+    /// While the native login gate is up, only authentication pages may load.
+    /// A main-frame navigation anywhere else is cancelled instead of being
+    /// allowed to replace the login page.
+    var blocksInternalNavigation = false
+    /// The path the shared WebView last settled on, used to avoid re-issuing
+    /// the same gate navigation.
+    private(set) var currentPath = ""
+
+    var isShowingAuthPage: Bool { ShellTab.isAuthPath(currentPath) }
 
     nonisolated private static let appearanceModeKey = "CPUWebAppearanceMode"
+
+    var appearanceModeLabel: String {
+        switch appearanceMode {
+        case "dark": return "深色"
+        case "light": return "浅色"
+        default: return "跟随系统"
+        }
+    }
+
+    var appearanceIconName: String {
+        switch appearanceMode {
+        case "dark": return "moon"
+        case "light": return "sun.max"
+        default: return "circle.lefthalf.filled"
+        }
+    }
 
     nonisolated static func storedAppearanceScheme() -> ColorScheme? {
         switch UserDefaults.standard.string(forKey: appearanceModeKey) {
@@ -168,6 +195,21 @@ final class HybridWebViewStore: NSObject, ObservableObject, WKScriptMessageHandl
         navigationGeneration += 1
         navigationTask?.cancel()
         activeTab = tab
+    }
+
+    /// A session cookie is the only pre-flight signal the shell has before the
+    /// Web app boots. Its presence means "probably signed in": the gate stays
+    /// down and the live `authChanged` report is the final word.
+    func hasSessionCookie() async -> Bool {
+        let cookies = await WKWebsiteDataStore.default().httpCookieStore.allCookies()
+        return cookies.contains {
+            ($0.name == "__Host-cpu-session" || $0.name == "cpu-session") && !$0.value.isEmpty
+        }
+    }
+
+    /// The login gate is a one-way door: the page must not be swiped away.
+    func setBackForwardNavigationGesturesEnabled(_ enabled: Bool) {
+        makeWebView().allowsBackForwardNavigationGestures = enabled
     }
 
     func mount(tab: ShellTab, in host: UIView) {
@@ -274,7 +316,81 @@ final class HybridWebViewStore: NSObject, ObservableObject, WKScriptMessageHandl
         }
     }
 
+#if DEBUG
+    func debugDump(_ label: String) async {
+        guard let webView else { return }
+        let script = #"""
+        const root = document.querySelector('.layout-root');
+        const main = document.querySelector('.layout-root > .main');
+        const page = main?.firstElementChild;
+        const cs = (el) => el ? getComputedStyle(el) : null;
+        const box = (el) => { if (!el) return null; const r = el.getBoundingClientRect(); return [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)]; };
+        return JSON.stringify({
+          url: location.pathname,
+          inner: [innerWidth, innerHeight],
+          vv: [Math.round(visualViewport.width), Math.round(visualViewport.height)],
+          docScroll: [document.scrollingElement.scrollTop, document.scrollingElement.scrollHeight],
+          rootStyle: root ? root.getAttribute('style') : null,
+          rootClass: root ? root.className : null,
+          rootBox: box(root),
+          rootMinH: cs(root) ? cs(root).minHeight : null,
+          mainBox: box(main),
+          mainPad: cs(main) ? [cs(main).paddingTop, cs(main).paddingBottom, cs(main).paddingLeft] : null,
+          pageClass: page ? page.className : null,
+          pageBox: box(page),
+          pagePad: cs(page) ? [cs(page).paddingTop, cs(page).paddingBottom] : null,
+          statusEl: (document.querySelector('[data-cpu-ios-status-content]') || {}).className || null,
+          statusBox: box(document.querySelector('[data-cpu-ios-status-content]')),
+          pageChildren: page ? [...page.children].map(e => e.tagName + '.' + e.className + ' ' + JSON.stringify(box(e))) : null
+        });
+        """#
+        let value = try? await webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
+        NSLog("CPUDEBUG[%@] %@", label, (value as? String) ?? "nil")
+        NSLog("CPUDEBUG[%@] native bounds=%@ safeArea=%@ window=%@", label, NSCoder.string(for: webView.bounds), NSCoder.string(for: CGRect(x: webView.safeAreaInsets.left, y: webView.safeAreaInsets.top, width: webView.safeAreaInsets.right, height: webView.safeAreaInsets.bottom)), webView.window == nil ? "nil" : "set")
+    }
+#endif
+
     func goBack() { webView?.goBack() }
+
+    func openWebMenu() {
+        let script = "document.querySelector('.topbar .mobile-actions button[aria-label=\"更多\"]')?.click(); true;"
+        webView?.evaluateJavaScript(script)
+    }
+
+    func setAppearanceMode(_ mode: String) {
+        guard ["system", "light", "dark"].contains(mode) else { return }
+        appearanceMode = mode
+        UserDefaults.standard.set(mode, forKey: Self.appearanceModeKey)
+        pageColorScheme = mode == "system" ? nil : (mode == "dark" ? .dark : .light)
+        let modeLiteral = IOSNextWebConfiguration.javascriptString(mode)
+        let script = """
+        (() => {
+          const mode = \(modeLiteral);
+          // Keep Vue's reactive store in sync with the native shell. The DOM
+          // fallback below is still needed while an older web bundle boots.
+          try { window.__cpuSetAppearanceMode?.(mode); } catch (_) {}
+          try { localStorage.setItem('cpu-appearance-mode-v1', mode); } catch (_) {}
+          const prefersDark = mode === 'dark' || (mode === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+          const root = document.documentElement;
+          root.dataset.appearanceMode = mode;
+          root.dataset.theme = prefersDark ? 'dark' : 'light';
+          root.classList.toggle('dark', prefersDark);
+          root.style.colorScheme = prefersDark ? 'dark' : 'light';
+          return true;
+        })()
+        """
+        webView?.evaluateJavaScript(script)
+    }
+
+    func cycleAppearanceMode() {
+        let next: String
+        switch appearanceMode {
+        case "system": next = "dark"
+        case "dark": next = "light"
+        default: next = "system"
+        }
+        setAppearanceMode(next)
+    }
 
     func retry() {
         errorMessage = nil
@@ -315,6 +431,7 @@ final class HybridWebViewStore: NSObject, ObservableObject, WKScriptMessageHandl
         case "appearance":
             guard let dark = body["dark"] as? Bool else { return }
             let mode = (body["mode"] as? String) ?? "system"
+            appearanceMode = mode
             UserDefaults.standard.set(mode, forKey: Self.appearanceModeKey)
             let scheme: ColorScheme? = mode == "system" ? nil : (dark ? .dark : .light)
             if pageColorScheme != scheme { pageColorScheme = scheme }
@@ -326,10 +443,12 @@ final class HybridWebViewStore: NSObject, ObservableObject, WKScriptMessageHandl
             onNavigate?(path, source)
         case "route":
             guard let path = body["path"] as? String else { return }
+            currentPath = path
             onRoute?(path, source)
         case "authChanged":
             automaticWidgetSetupAttempted = false
             widgetAuthGeneration += 1
+            isLoggedIn = !(body["account"] as? String ?? "").isEmpty
             // An account fingerprint lets the timetable keep its cached view
             // when the session merely finished restoring the same account.
             onAuthChanged?((body["account"] as? String) ?? "")
@@ -340,6 +459,7 @@ final class HybridWebViewStore: NSObject, ObservableObject, WKScriptMessageHandl
 
     fileprivate func didFinish(url: URL?) {
         guard let url, let path = Self.path(for: url) else { return }
+        currentPath = path
         onRoute?(path, activeTab.rawValue)
     }
 
@@ -374,45 +494,92 @@ final class HybridWebViewStore: NSObject, ObservableObject, WKScriptMessageHandl
           const style = document.createElement('style');
           style.textContent = `
             html[data-cpu-ios-next] { --cpu-ios-bottom-clearance: 96px; }
-            /* The native shell supplies the bottom tab bar, so the Web tab bar
-               and the desktop footer stay hidden. The Web top bar is kept: it
-               is the only place with the brand, account and menu entries. */
-            html[data-cpu-ios-next] .layout-root > .mobile-tabbar,
-            html[data-cpu-ios-next] .layout-root > .footer { display: none !important; }
+            /* The native shell supplies both bars. The Web top bar stays in the
+               DOM so its drawer and account actions remain reusable. */
+            html[data-cpu-ios-next] .layout-root > .topbar,
+            html[data-cpu-ios-next] .layout-root > .mobile-tabbar { display: none !important; }
+            html[data-cpu-ios-next] .independent-service-note { display: none !important; }
             html[data-cpu-ios-next] .layout-root {
               --layout-mobile-tabbar-reserve: 0px !important;
+              --cpu-safe-area-inset-top: 0px !important;
               --cpu-ios-inline-inset: 20px;
+            }
+            /* Keep the shared WKWebView itself fixed to the native content
+               viewport and make the Web app the only vertical scroller. A
+               number of deployed Web bundles still leave body scrolling
+               enabled, which lets the old scroll offset cut into the first
+               card after a native tab switch. */
+            html[data-cpu-ios-next],
+            html[data-cpu-ios-next] body {
+              height: 100%;
+              overflow: hidden;
+            }
+            html[data-cpu-ios-next] #app {
+              height: 100%;
+              min-height: 0;
+              max-height: 100%;
+              overflow-x: hidden;
+              overflow-y: auto;
+              -webkit-overflow-scrolling: touch;
+              overscroll-behavior-y: contain;
             }
             @media (max-width: 768px) {
               html[data-cpu-ios-next] .layout-root { --cpu-ios-inline-inset: 12px; }
             }
             html[data-cpu-ios-next] .layout-root .main {
-              padding-top: 0 !important;
+              /* The native top bar sits outside the WebView. Keep the Web
+                 page's normal breathing room below it; only the status-bar
+                 inset is consumed by SwiftUI. */
               padding-bottom: var(--cpu-ios-bottom-clearance) !important;
             }
-            html[data-cpu-ios-next] #app > [data-cpu-ios-status-content] {
-              padding-bottom: calc(var(--cpu-ios-original-bottom, 0px) + var(--cpu-ios-bottom-clearance)) !important;
+            html[data-cpu-ios-next] .layout-root .main:not(.main--bare):not(.main--full-width):not(.main--mobile-topic) {
+              padding-top: 14px !important;
+            }
+            html[data-cpu-ios-next] .layout-root .main.main--bare,
+            html[data-cpu-ios-next] .layout-root .main.main--full-width,
+            html[data-cpu-ios-next] .layout-root .main.main--mobile-topic {
+              padding-top: 0 !important;
+            }
+            /* Older Web bundles hid the footer whenever they detected a
+               native shell. If that node exists, the current shell owns only
+               the native tab bar and should leave the Web footer reachable. */
+            html[data-cpu-ios-next] .layout-root > .footer {
+              display: block !important;
+            }
+            /* Web drawers and course editor dialogs must sit above the native
+               floating tab bar and keep their last controls reachable. */
+            html[data-cpu-ios-next] .mobile-drawer,
+            html[data-cpu-ios-next] .el-drawer.direction-btt {
+              bottom: var(--cpu-ios-bottom-clearance) !important;
+              max-height: calc(92dvh - var(--cpu-ios-bottom-clearance)) !important;
+              border-radius: 18px 18px 0 0;
+            }
+            html[data-cpu-ios-next] .mobile-drawer .el-drawer__body,
+            html[data-cpu-ios-next] .el-drawer.direction-btt .el-drawer__body {
+              padding-bottom: 16px !important;
+              overflow-y: auto !important;
+              overscroll-behavior: contain;
+            }
+            html[data-cpu-ios-next] .course-editor-overlay {
+              padding-bottom: calc(8px + var(--cpu-ios-bottom-clearance)) !important;
+            }
+            html[data-cpu-ios-next] .course-editor-panel {
+              max-height: calc(92dvh - var(--cpu-ios-bottom-clearance)) !important;
+            }
+            html[data-cpu-ios-next] .course-editor-scroll {
+              padding-bottom: calc(12px + env(safe-area-inset-bottom) + var(--cpu-ios-bottom-clearance)) !important;
+            }
+            html[data-cpu-ios-next] .el-overlay {
+              padding-bottom: var(--cpu-ios-bottom-clearance);
             }
             html[data-cpu-ios-next] .layout-root:not(.layout-root--full-width) > .main:not(.main--bare):not(.main--full-width):not(.main--mobile-topic) {
               padding-inline: var(--cpu-ios-inline-inset) !important;
             }
-            /* Pages that already reserve the notch inside their own padding
-               (login, register) must not stack a second inset on top of it. */
-            html[data-cpu-ios-next] [data-cpu-ios-status-content] {
-              padding-top: max(var(--cpu-ios-original-top, 0px), env(safe-area-inset-top, 0px)) !important;
-            }
-            /* The home search panel is an edge-to-edge sheet only while it is
-               the first thing on the page. Anything above it keeps the notch
-               clearance, so it can no longer hide under the status bar. */
-            html[data-cpu-ios-next] .home-entry[data-cpu-ios-hero] {
-              border-top-left-radius: 0; border-top-right-radius: 0; border-top: 0;
-              margin-inline: calc(-1 * var(--cpu-ios-inline-inset, 0px));
-              padding-left: calc(var(--cpu-ios-original-left, 0px) + var(--cpu-ios-inline-inset, 0px));
-              padding-right: calc(var(--cpu-ios-original-right, 0px) + var(--cpu-ios-inline-inset, 0px));
-            }
             /* A native tab tap is a tab change, not an in-page forward
                navigation: swapping instantly keeps the frozen outgoing page
                from showing through the incoming one. */
+            html[data-cpu-ios-next] .page-route-enter-active,
+            html[data-cpu-ios-next] .page-route-leave-active { transition: none !important; }
             html[data-cpu-ios-next][data-cpu-ios-tab-switch] .page-route-enter-active,
             html[data-cpu-ios-next][data-cpu-ios-tab-switch] .page-route-leave-active { transition: none !important; }
           `;
@@ -451,71 +618,28 @@ final class HybridWebViewStore: NSObject, ObservableObject, WKScriptMessageHandl
             setScheduleWidgetTheme: (theme) => post({type: 'setScheduleWidgetTheme', theme: String(theme ?? '')})
           };
 
-          // Put the notch clearance inside whatever element sits at the top of
-          // the page, rather than in a separate native white strip. Reapply to
-          // newly mounted route views and to the Web top bar appearing.
-          let statusFrame = 0;
-          let statusTarget = null;
-          const updateStatusContent = () => {
-            statusFrame = 0;
-            const main = document.querySelector('.layout-root > .main');
-            const mounted = main ? [...main.children] : [];
-            // During a route transition the outgoing page is frozen in place
-            // while the incoming one is already mounted. The notch clearance
-            // belongs to the incoming page; applying it only after the old page
-            // leaves made the new content flash under the status bar and then
-            // jump down.
-            const page = mounted.find(el => !String(el.className).includes('page-route-leave'))
-              || mounted[mounted.length - 1]
-              || document.querySelector('#app > :first-child:not(.layout-root)');
-            // With the Web top bar on screen it already sits above the page, so
-            // the clearance belongs to the bar; only a page without the bar
-            // carries the inset itself. Tracking the current owner keeps a
-            // stale inset from stacking when the bar appears or disappears.
-            const topbar = document.querySelector('.layout-root > .topbar');
-            const content = topbar && getComputedStyle(topbar).display !== 'none' ? topbar : page;
-            if (content !== statusTarget) {
-              if (statusTarget) statusTarget.removeAttribute('data-cpu-ios-status-content');
-              statusTarget = content;
-              if (content) {
-                const computed = getComputedStyle(content);
-                content.style.setProperty('--cpu-ios-original-top', computed.paddingTop);
-                content.style.setProperty('--cpu-ios-original-left', computed.paddingLeft);
-                content.style.setProperty('--cpu-ios-original-right', computed.paddingRight);
-                content.style.setProperty('--cpu-ios-original-bottom', computed.paddingBottom);
-                content.setAttribute('data-cpu-ios-status-content', '');
-              }
-            }
-            const hero = page && page.matches('.home-stream') && page.firstElementChild
-              && page.firstElementChild.classList.contains('home-entry')
-              ? page.firstElementChild : null;
-            if (hero && !hero.hasAttribute('data-cpu-ios-hero')) {
-              const heroStyle = getComputedStyle(hero);
-              hero.style.setProperty('--cpu-ios-original-left', heroStyle.paddingLeft);
-              hero.style.setProperty('--cpu-ios-original-right', heroStyle.paddingRight);
-              hero.setAttribute('data-cpu-ios-hero', '');
-            }
-          };
-          const scheduleStatusContent = () => {
-            if (!statusFrame) statusFrame = requestAnimationFrame(updateStatusContent);
-          };
           const observePage = () => {
             if (!document.documentElement) return;
-            new MutationObserver(scheduleStatusContent).observe(document.documentElement, {childList: true, subtree: true});
             const appearance = () => post({
               type: 'appearance', dark: document.documentElement.dataset.theme === 'dark',
               mode: document.documentElement.dataset.appearanceMode || 'system'
             });
             new MutationObserver(appearance).observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme', 'data-appearance-mode']});
             appearance();
-            scheduleStatusContent();
           };
           if (document.readyState === 'loading') addEventListener('DOMContentLoaded', observePage, {once: true});
           else observePage();
 
           if (window.__cpuTimeNativeRouteBridge) return;
           window.__cpuTimeNativeRouteBridge = true;
+          const resetScroll = () => {
+            const app = document.getElementById('app');
+            app?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+            document.scrollingElement?.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+            window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+          };
           const notifyRoute = () => {
+            resetScroll();
             const path = `${location.pathname || '/'}${location.search || ''}${location.hash || ''}`;
             post({ type: 'route', path });
           };
@@ -622,6 +746,14 @@ private final class HybridWebViewCoordinator: NSObject, WKNavigationDelegate, WK
         }
 
         if IOSNextWebConfiguration.isTrusted(url) {
+            // The login gate owns navigation: a link, a server redirect or a
+            // restored history entry must not replace the login page.
+            if store?.blocksInternalNavigation == true,
+               navigationAction.targetFrame?.isMainFrame != false,
+               !ShellTab.isAuthPath(url.path) {
+                decisionHandler(.cancel)
+                return
+            }
             if navigationAction.targetFrame?.isMainFrame != false && ShellTab.isSchedulePath(url.path) {
                 if navigationAction.navigationType == .linkActivated {
                     store?.openNativeRoute(url.path + (url.query.map { "?\($0)" } ?? ""))
@@ -663,6 +795,9 @@ private final class HybridWebViewCoordinator: NSObject, WKNavigationDelegate, WK
     ) -> WKWebView? {
         if let url = navigationAction.request.url {
             if IOSNextWebConfiguration.isTrusted(url) {
+                // A popup to a non-auth page would leave the gate through a
+                // second route, so it is dropped while the gate is up.
+                if store?.blocksInternalNavigation == true, !ShellTab.isAuthPath(url.path) { return nil }
                 store?.navigate(path: url.path + (url.query.map { "?\($0)" } ?? ""))
             } else {
                 store?.openExternal(url)

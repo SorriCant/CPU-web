@@ -165,8 +165,8 @@
       }"
     >
       <router-view v-slot="{ Component }">
-        <transition name="page-route" :css="!useIosRouteTransition || iosRouteTransitionEnabled"
-          @before-leave="freezeLeavingPage" @after-leave="releaseLeavingPage" @leave-cancelled="releaseLeavingPage">
+        <transition name="page-route" :css="!useIosRouteTransition || (iosRouteTransitionEnabled && !useIosNextShell)"
+          @before-leave="freezeRoutePage" @after-leave="releaseRoutePage" @leave-cancelled="releaseRoutePage">
           <component :is="Component" />
         </transition>
       </router-view>
@@ -244,16 +244,19 @@
       </el-icon>
     </button>
 
-    <footer v-if="!hideChrome && !useNativeShell && !fullHeightContent && !mobileTopicChrome" class="footer">
+    <footer v-if="!hideChrome && !useFlutterShell && !fullHeightContent && !mobileTopicChrome" class="footer">
       <div class="footer-inner">
         <div class="footer-main">
           <div class="footer-company">
-            <router-link class="footer-brand" to="/home">药大拾间</router-link>
+            <div class="footer-brand-row">
+              <span class="footer-brand-mark" aria-hidden="true">药</span>
+              <router-link class="footer-brand" to="/home">药大拾间</router-link>
+            </div>
             <p>球谐信息技术（深圳）有限公司</p>
             <a class="footer-about" href="/about.html">了解我们 <span aria-hidden="true">↗</span></a>
           </div>
           <address class="footer-contact">
-            <p class="footer-contact-label">联系与地址</p>
+            <p class="footer-contact-label"><span class="footer-label-line" aria-hidden="true"></span>联系与地址</p>
             <p class="footer-address">深圳市南山区高新南九道51号航空航天大厦1号楼2302</p>
             <div class="footer-contact-links">
               <a href="tel:19984839722" aria-label="联系电话 19984839722">19984839722</a>
@@ -369,7 +372,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, defineAsyncComponent, onBeforeUnmount, onMounted, watch } from "vue";
+import { ref, computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import LiquidGlassTabbar from "../components/common/LiquidGlassTabbar.vue";
 import { ElMessage } from "element-plus";
@@ -718,6 +721,19 @@ watch(() => route.fullPath, () => {
   editableFocused.value = false;
   editorFocused.value = false;
   syncViewportMetrics();
+  if (useIosNextShell.value) {
+    // The shared WKWebView keeps its document scroll position between native
+    // tab switches. Start each ordinary Web route at its own top edge so a
+    // previous page cannot leave the first card clipped beneath the shell bar.
+    resetIosNativeScroll();
+    void nextTick(() => {
+      resetIosNativeScroll();
+      requestAnimationFrame(() => {
+        resetIosNativeScroll();
+        window.setTimeout(resetIosNativeScroll, 48);
+      });
+    });
+  }
 });
 
 function handleViewportMetricsChange() {
@@ -976,6 +992,27 @@ async function performLogout() {
 function setAppearanceMode(command: string | number | object) {
   const mode = String(command);
   if (mode === "system" || mode === "light" || mode === "dark") appearance.setMode(mode);
+}
+
+function freezeRoutePage(element: Element) {
+  // The native iOS shell keeps the shared WKWebView mounted while its native
+  // tab selection changes. Freezing a Web page here would briefly pin the old
+  // scroll position over the new route and produce a white flash.
+  if (useIosNextShell.value) return;
+  freezeLeavingPage(element);
+}
+
+function releaseRoutePage(element: Element) {
+  if (useIosNextShell.value) return;
+  releaseLeavingPage(element);
+}
+
+function resetIosNativeScroll() {
+  const behavior = "auto" as ScrollBehavior;
+  const app = document.getElementById("app");
+  app?.scrollTo({ top: 0, left: 0, behavior });
+  document.scrollingElement?.scrollTo({ top: 0, left: 0, behavior });
+  window.scrollTo({ top: 0, left: 0, behavior });
 }
 </script>
 
@@ -1557,17 +1594,95 @@ html[data-theme="dark"] .assistant-widget {
 /* Keep the existing horizontal layout. Scrollable bottom clearance lets the
    last item move above SwiftUI's floating tab bar without an opaque safe area. */
 .layout-root--ios-next .main {
-  padding-top: 0 !important;
+  /* The native top bar is outside the WebView, so the Web page still needs
+     its normal breathing room below that bar. The safe-area inset itself is
+     already consumed by SwiftUI and is kept at zero on this shell. */
   padding-bottom: var(--cpu-ios-bottom-clearance, 96px) !important;
+}
+.layout-root--ios-next .main:not(.main--bare):not(.main--full-width):not(.main--mobile-topic) {
+  padding-top: 14px !important;
+}
+.layout-root--ios-next .main--bare,
+.layout-root--ios-next .main--full-width,
+.layout-root--ios-next .main--mobile-topic {
+  padding-top: 0 !important;
+}
+.layout-root--ios-next {
+  /* SwiftUI positions the WebView below the native chrome. Letting mobile
+     pages reserve the iOS status inset a second time leaves a clipped strip
+     above the first card. Login/register pages stay outside this layout and
+     continue to use the browser safe area. */
+  --cpu-safe-area-inset-top: 0px;
+}
+
+.layout-root--ios-next:not(.layout-root--full-height) {
+  min-height: 100%;
+  height: auto;
+}
+
+.layout-root--ios-next .footer {
+  /* The native tab bar floats over the WebView edge, so the footer itself
+     needs enough scrollable tail to remain reachable. */
+  padding-bottom: calc(18px + var(--cpu-ios-bottom-clearance, 96px));
+}
+/* The standalone notice is already covered by the native app's legal pages.
+   Keeping it out of the compact iOS shell prevents a wrapped line from
+   pushing the first mobile card below the fold. */
+:global(html[data-cpu-ios-next] .independent-service-note) {
+  display: none !important;
+}
+
+:global(html[data-cpu-ios-next] .mobile-drawer),
+:global(html[data-cpu-ios-next] .el-drawer.direction-btt) {
+  bottom: var(--cpu-ios-bottom-clearance, 96px) !important;
+  max-height: calc(92dvh - var(--cpu-ios-bottom-clearance, 96px)) !important;
+}
+:global(html[data-cpu-ios-next] .mobile-drawer .el-drawer__body),
+:global(html[data-cpu-ios-next] .el-drawer.direction-btt .el-drawer__body) {
+  padding-bottom: 16px !important;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+}
+:global(html[data-cpu-ios-next] .course-editor-overlay) {
+  padding-bottom: calc(8px + var(--cpu-ios-bottom-clearance, 96px)) !important;
+}
+:global(html[data-cpu-ios-next] .course-editor-panel) {
+  max-height: calc(92dvh - var(--cpu-ios-bottom-clearance, 96px)) !important;
+}
+:global(html[data-cpu-ios-next] .course-editor-scroll) {
+  padding-bottom: calc(12px + env(safe-area-inset-bottom) + var(--cpu-ios-bottom-clearance, 96px)) !important;
 }
 
 .footer {
-  background: var(--cpu-surface);
+  position: relative;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--cpu-surface) 94%, var(--cpu-bg));
   border-top: 1px solid var(--cpu-border-soft);
-  padding: 28px 20px 18px;
-  font-size: 12px;
-  line-height: 1.7;
+  padding: clamp(22px, 3vw, 32px) 20px 16px;
+  font-size: 13px;
+  line-height: 1.65;
   color: var(--cpu-text-secondary);
+}
+
+.footer::before {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--cpu-primary) 75%, transparent) 24%, color-mix(in srgb, var(--cpu-gold) 70%, transparent) 76%, transparent);
+  content: "";
+  opacity: 0.75;
+}
+
+.footer::after {
+  position: absolute;
+  top: -140px;
+  right: 8%;
+  width: 360px;
+  height: 260px;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--cpu-primary) 9%, transparent), transparent 68%);
+  content: "";
+  pointer-events: none;
 }
 
 .footer-inner {
@@ -1594,29 +1709,59 @@ html[data-theme="dark"] .assistant-widget {
 
 .footer-main {
   display: grid;
-  grid-template-columns: 1fr minmax(0, 1fr);
-  gap: 24px 48px;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  gap: clamp(18px, 4vw, 56px);
   align-items: start;
-  padding-bottom: 22px;
+  padding-bottom: clamp(18px, 2.4vw, 24px);
+}
+
+.footer-company,
+.footer-contact {
+  min-width: 0;
 }
 
 .footer-company {
   font-size: 13px;
 }
 
+.footer-brand-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .footer a.footer-brand {
   color: var(--cpu-text);
-  font-size: 17px;
-  font-weight: 650;
-  letter-spacing: 0.02em;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.footer-brand-mark {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--cpu-primary) 42%, var(--cpu-border-soft));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--cpu-primary) 16%, transparent);
+  color: var(--cpu-primary);
+  font-size: 15px;
+  font-weight: 750;
 }
 
 .footer-company p {
-  margin: 6px 0 8px;
+  margin: 8px 0 6px;
+  color: var(--cpu-text-secondary);
 }
 
-.footer-about span {
-  margin-left: 4px;
+.footer-about {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 6px;
+  color: var(--cpu-primary) !important;
+  font-weight: 600;
 }
 
 .footer-contact {
@@ -1629,8 +1774,19 @@ html[data-theme="dark"] .assistant-widget {
 }
 
 .footer-contact-label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   color: var(--cpu-text);
-  font-weight: 500;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.footer-label-line {
+  width: 18px;
+  height: 3px;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--cpu-primary), var(--cpu-gold));
 }
 
 .footer-contact .footer-address {
@@ -1641,9 +1797,21 @@ html[data-theme="dark"] .assistant-widget {
 .footer-contact-links {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 24px;
-  margin-top: 6px;
+  gap: 8px;
+  margin-top: 8px;
   font-variant-numeric: tabular-nums;
+}
+
+.footer-contact-links a {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  padding: 2px 0;
+  transition: border-color 160ms ease, background-color 160ms ease, color 160ms ease;
+}
+
+.footer-contact-links a:hover {
+  text-decoration: none;
 }
 
 .footer-bottom {
@@ -1652,30 +1820,71 @@ html[data-theme="dark"] .assistant-widget {
   align-items: center;
   justify-content: space-between;
   gap: 8px 24px;
-  padding-top: 14px;
+  padding-top: 12px;
   border-top: 1px solid var(--cpu-border-soft);
 }
 
 .footer-links {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 20px;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.footer-links a {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 7px;
+  color: var(--cpu-text-secondary);
+  transition: background-color 160ms ease, color 160ms ease;
+}
+
+.footer-links a:hover {
+  background: color-mix(in srgb, var(--cpu-primary) 10%, transparent);
+  text-decoration: none;
 }
 
 @media (max-width: 600px) {
   .footer {
-    padding: 24px 20px 18px;
+    padding: 20px max(16px, env(safe-area-inset-right, 0px)) calc(var(--liquid-tabbar-reserve) + 14px) max(16px, env(safe-area-inset-left, 0px));
   }
 
   .footer-main {
     grid-template-columns: 1fr;
-    gap: 20px;
+    gap: 10px;
+    padding-bottom: 16px;
+  }
+
+  .footer-company,
+  .footer-contact {
+    padding: 0;
   }
 
   .footer-bottom {
     align-items: flex-start;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
+  }
+
+  .footer-links {
+    width: 100%;
+    justify-content: stretch;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .footer-links a {
+    min-height: 34px;
+    justify-content: center;
+    border: 1px solid var(--cpu-border-soft);
+    background: color-mix(in srgb, var(--cpu-surface) 44%, transparent);
+    text-align: center;
+  }
+
+  .footer-contact-links a {
+    min-height: 30px;
   }
 }
 
@@ -2048,9 +2257,8 @@ html[data-theme="dark"] .assistant-widget {
   }
 
   .footer {
-    padding: 12px 12px calc(var(--liquid-tabbar-reserve) + 12px);
-    gap: 6px 12px;
-    font-size: 11px;
+    padding: 20px max(16px, env(safe-area-inset-right, 0px)) calc(var(--liquid-tabbar-reserve) + 14px) max(16px, env(safe-area-inset-left, 0px));
+    font-size: 12px;
   }
 
   .layout-root--native-shell .main {

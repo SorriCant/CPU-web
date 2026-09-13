@@ -50,10 +50,25 @@ test('sign out clears account-scoped watch data without sending the old snapshot
 
 test('self signing values are configurable and local overrides stay ignored', async () => {
   const config = await read('ios_next/CpuTime/Configurations/SharedSigning.xcconfig');
+  const project = await read('ios_next/CpuTime/CpuTime.xcodeproj/project.pbxproj');
   const ignore = await read('.gitignore');
   const entitlement = await read('ios_next/CpuTime/CPUWatch/CPUWatch.entitlements');
   assert.match(config, /CPU_APP_BUNDLE_IDENTIFIER/);
   assert.match(config, /CPU_APP_GROUP_IDENTIFIER/);
   assert.match(ignore, /ios_next\/CpuTime\/Configurations\/Signing\.local\.xcconfig/);
   assert.match(entitlement, /\$\(CPU_APP_GROUP_IDENTIFIER\)/);
+
+  for (const target of ['CpuTime', 'CPUWebWidgets', 'CPUWatch', 'CPUWatchWidgets']) {
+    const marker = `/* Debug configuration for PBXNativeTarget "${target}" */`;
+    const start = project.indexOf(marker);
+    const end = project.indexOf('\n\t\t\tname = Debug;', start);
+    assert.notEqual(start, -1, `missing Debug configuration for ${target}`);
+    assert.notEqual(end, -1, `unterminated Debug configuration for ${target}`);
+    const block = project.slice(start, end);
+    assert.match(
+      block,
+      /DEVELOPMENT_TEAM = "\$\(CPU_DEVELOPMENT_TEAM\)";/,
+      `${target} Debug must use the shared, locally overridable Team ID`,
+    );
+  }
 });

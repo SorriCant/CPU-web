@@ -6,11 +6,16 @@ import XCTest
 private final class MemoryScheduleStorage: ScheduleStorage {
     var data: Data?
     private(set) var writes = 0
+    private(set) var removals = 0
 
     func read() throws -> Data? { data }
     func write(_ data: Data) throws {
         self.data = data
         writes += 1
+    }
+    func remove() throws {
+        data = nil
+        removals += 1
     }
 }
 
@@ -26,17 +31,22 @@ private final class MockScheduleTransport: ScheduleTransport {
     private(set) var sent: [Data] = []
     private(set) var activations = 0
     private(set) var statuses: [(ScheduleFailure, Data?)] = []
+    var snapshotFailure: ScheduleFailure?
+    var refreshResult: Result<Void, ScheduleFailure> = .success(())
 
     func activate() {
         activations += 1
         onConnectionChange?()
     }
-    func updateSnapshot(_ data: Data) throws { sent.append(data) }
+    func updateSnapshot(_ data: Data) throws {
+        if let snapshotFailure { throw snapshotFailure }
+        sent.append(data)
+    }
     func updateStatus(_ failure: ScheduleFailure, snapshot: Data?) throws {
         statuses.append((failure, snapshot))
     }
     func requestRefresh(completion: @escaping (Result<Void, ScheduleFailure>) -> Void) {
-        completion(.success(()))
+        completion(refreshResult)
     }
 }
 
@@ -49,31 +59,61 @@ private final class MockBackgroundTask: WatchBackgroundTaskCompleting {
 
 @MainActor
 final class WatchScheduleCoreTests: XCTestCase {
-    private func fixture(generatedAt: Date? = nil) -> ScheduleEnvelope {
+    private func fixture(
+        generatedAt: Date? = nil,
+        includePeriods: Bool = true,
+        periods: [SchedulePeriod]? = nil,
+        courses: [WatchCourse]? = nil
+    ) -> ScheduleEnvelope {
         ScheduleEnvelope(
             schemaVersion: 1,
-            messageType: "schedule.snapshot",
+            messageType: ScheduleWireProtocol.MessageType.snapshot,
             generatedAt: generatedAt ?? instant("2026-01-05T00:00:00Z"),
             semester: ScheduleSemester(
                 id: "fixture-semester",
                 startDate: "2025-12-29",
-                endDate: "2026-01-18",
-                weekCount: 3
+                endDate: "2026-01-25",
+                weekCount: 4
             ),
             timezone: "Asia/Shanghai",
             currentWeek: 2,
-            coveredWeeks: [1, 2, 3],
-            periods: [
+            coveredWeeks: [1, 2, 3, 4],
+            periods: includePeriods ? (periods ?? [
                 SchedulePeriod(number: 1, startTime: "08:00", endTime: "08:45"),
                 SchedulePeriod(number: 2, startTime: "08:55", endTime: "09:40"),
-            ],
-            courses: [
+                SchedulePeriod(number: 3, startTime: "09:55", endTime: "10:40"),
+            ]) : nil,
+            courses: courses ?? [
                 WatchCourse(
                     id: "course-1", name: "测试课程", teacher: nil, room: nil, campus: nil,
                     weekday: 1, startPeriod: 1, endPeriod: 2,
-                    startTime: "08:00", endTime: "09:40", weeks: [1, 2, 3]
+                    startTime: "08:00", endTime: "09:40", weeks: [1, 2, 3, 4]
                 ),
             ]
+        )
+    }
+
+    private func course(
+        id: String,
+        weekday: Int = 1,
+        startPeriod: Int = 1,
+        endPeriod: Int = 2,
+        startTime: String = "08:00",
+        endTime: String = "09:40",
+        weeks: [Int]
+    ) -> WatchCourse {
+        WatchCourse(
+            id: id,
+            name: id,
+            teacher: nil,
+            room: nil,
+            campus: nil,
+            weekday: weekday,
+            startPeriod: startPeriod,
+            endPeriod: endPeriod,
+            startTime: startTime,
+            endTime: endTime,
+            weeks: weeks
         )
     }
 
@@ -84,7 +124,111 @@ final class WatchScheduleCoreTests: XCTestCase {
     func testEnvelopeRoundTripPreservesAuthoritativePeriods() throws {
         let value = fixture()
         XCTAssertEqual(try ScheduleEnvelope.decode(value.encoded()), value)
-        XCTAssertEqual(value.displayPeriods.map(\.number), [1, 2])
+        XCTAssertEqual(value.displayPeriods.map(\.number), [1, 2, 3])
+    }
+
+    func testUnsupportedSchemaVersionIsRejected() throws {
+        var json = try JSONSerialization.jsonObject(with: fixture().encoded()) as! [String: Any]
+        json[ScheduleWireProtocol.Key.schemaVersion] = ScheduleWireProtocol.schemaVersion + 1
+        let data = try JSONSerialization.data(withJSONObject: json)
+
+        XCTAssertThrowsError(try ScheduleEnvelope.decode(data)) { error in
+            XCTAssertEqual(error as? ScheduleFailure, .unsupportedVersion)
+        }
+    }
+
+    func testInvalidPayloadDoesNotOverwriteValidCache() throws {
+        let storage = MemoryScheduleStorage()
+        let repository = CourseRepository(storage: storage)
+        let original = fixture()
+        try repository.accept(original.encoded())
+        var json = try JSONSerialization.jsonObject(with: original.encoded()) as! [String: Any]
+        json["timezone"] = "Not/A-Timezone"
+        let invalid = try JSONSerialization.data(withJSONObject: json)
+
+        XCTAssertThrowsError(try repository.accept(invalid))
+        XCTAssertEqual(repository.snapshot, original)
+        XCTAssertEqual(storage.writes, 1)
+        XCTAssertEqual(repository.error, .invalidData)
+    }
+
+    func testContinuousOddEvenAndDiscreteWeeksRemainDistinct() {
+        let snapshot = fixture(courses: [
+            course(id: "continuous", weeks: [1, 2, 3, 4]),
+            course(id: "odd", weeks: [1, 3]),
+            course(id: "even", weeks: [2, 4]),
+            course(id: "discrete", weeks: [1, 4]),
+        ])
+        let mondays = ["2025-12-29", "2026-01-05", "2026-01-12", "2026-01-19"]
+            .compactMap(snapshot.date)
+
+        XCTAssertEqual(Set(snapshot.courses(on: mondays[0]).map(\.id)), ["continuous", "odd", "discrete"])
+        XCTAssertEqual(Set(snapshot.courses(on: mondays[1]).map(\.id)), ["continuous", "even"])
+        XCTAssertEqual(Set(snapshot.courses(on: mondays[2]).map(\.id)), ["continuous", "odd"])
+        XCTAssertEqual(Set(snapshot.courses(on: mondays[3]).map(\.id)), ["continuous", "even", "discrete"])
+    }
+
+    func testTodayCurrentAndNextCourseSelection() {
+        let current = course(id: "current", weeks: [2])
+        let next = course(
+            id: "next",
+            startPeriod: 3,
+            endPeriod: 3,
+            startTime: "09:55",
+            endTime: "10:40",
+            weeks: [2]
+        )
+        let snapshot = fixture(courses: [current, next])
+        let now = instant("2026-01-05T00:10:00Z") // 08:10 in Asia/Shanghai.
+
+        XCTAssertEqual(snapshot.courses(on: now).map(\.id), ["current", "next"])
+        XCTAssertEqual(snapshot.currentCourse(at: now)?.id, "current")
+        XCTAssertEqual(snapshot.nextCourseOccurrence(at: now)?.course.id, "next")
+    }
+
+    func testTimezoneMidnightMovesTeachingWeekAtLocalBoundary() {
+        let beforeMidnight = instant("2026-01-04T15:59:00Z")
+        let afterMidnight = instant("2026-01-04T16:00:00Z")
+
+        XCTAssertEqual(ScheduleEnvelope.teachingWeek(
+            at: beforeMidnight,
+            semesterStart: "2025-12-29",
+            semesterEnd: "2026-01-25",
+            timezone: "Asia/Shanghai"
+        ), 1)
+        XCTAssertEqual(ScheduleEnvelope.teachingWeek(
+            at: afterMidnight,
+            semesterStart: "2025-12-29",
+            semesterEnd: "2026-01-25",
+            timezone: "Asia/Shanghai"
+        ), 2)
+    }
+
+    func testEmptyTeacherAndRoomRoundTripAsNil() throws {
+        let decoded = try ScheduleEnvelope.decode(fixture().encoded())
+        XCTAssertNil(decoded.courses.first?.teacher)
+        XCTAssertNil(decoded.courses.first?.room)
+    }
+
+    func testCacheWriteCanBeRestoredOnColdStart() throws {
+        let storage = MemoryScheduleStorage()
+        let original = fixture()
+        try CourseRepository(storage: storage).accept(original.encoded())
+
+        let restored = CourseRepository(storage: storage)
+
+        XCTAssertEqual(restored.snapshot, original)
+        XCTAssertNil(restored.error)
+    }
+
+    func testLegacyCacheWithoutPeriodsIsAcceptedAndReconstructed() throws {
+        let legacy = fixture(includePeriods: false)
+        let decoded = try ScheduleEnvelope.decode(legacy.encoded())
+
+        XCTAssertNil(decoded.periods)
+        XCTAssertEqual(decoded.displayPeriods.map(\.number), [1, 2])
+        XCTAssertEqual(decoded.displayPeriods.first?.startTime, "08:00")
+        XCTAssertEqual(decoded.displayPeriods.last?.endTime, "09:40")
     }
 
     func testInvalidOverlappingPeriodsAreRejected() throws {
@@ -125,6 +269,34 @@ final class WatchScheduleCoreTests: XCTestCase {
 
         XCTAssertEqual(transport.activations, 1)
         XCTAssertEqual(transport.sent.count, 1)
+    }
+
+    func testPhoneTransportFailureIsReportedWithoutDroppingCache() throws {
+        let repository = CourseRepository(storage: MemoryScheduleStorage())
+        let original = fixture()
+        try repository.accept(original.encoded())
+        let transport = MockScheduleTransport()
+        transport.snapshotFailure = .syncFailed
+        let coordinator = ScheduleSyncCoordinator(role: .phone, repository: repository, transport: transport)
+
+        coordinator.start()
+
+        XCTAssertEqual(coordinator.state(), .failed(.syncFailed))
+        XCTAssertEqual(repository.snapshot, original)
+        XCTAssertTrue(transport.sent.isEmpty)
+    }
+
+    func testWatchRefreshRequestFailureIsReported() {
+        let repository = CourseRepository(storage: MemoryScheduleStorage())
+        let transport = MockScheduleTransport()
+        transport.refreshResult = .failure(.unavailable)
+        let coordinator = ScheduleSyncCoordinator(role: .watch, repository: repository, transport: transport)
+        coordinator.start()
+
+        coordinator.refresh()
+
+        XCTAssertEqual(coordinator.state(), .failed(.unavailable))
+        XCTAssertFalse(coordinator.refreshing)
     }
 
     func testAccountChangeClearsPhoneCacheBeforePublishingLoginRequired() throws {

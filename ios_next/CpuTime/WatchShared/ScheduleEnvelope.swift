@@ -1,6 +1,29 @@
 import Foundation
 import CryptoKit
 
+/// One source of truth for the property-list protocol carried by
+/// WatchConnectivity. Keeping keys and message kinds here prevents the phone,
+/// Watch and tests from silently drifting apart.
+nonisolated enum ScheduleWireProtocol {
+    static let schemaVersion = 1
+
+    enum Key {
+        static let schemaVersion = "schemaVersion"
+        static let messageType = "messageType"
+        static let schedule = "schedule"
+        static let status = "status"
+        static let snapshotID = "snapshotID"
+        static let receivedAt = "receivedAt"
+        static let accepted = "accepted"
+    }
+
+    enum MessageType {
+        static let snapshot = "schedule.snapshot"
+        static let refresh = "schedule.refresh"
+        static let receipt = "schedule.receipt"
+    }
+}
+
 nonisolated enum ScheduleFailure: String, Error, LocalizedError, Codable {
     case invalidData, unsupportedVersion, storage, unavailable, notActivated, notPaired
     case notInstalled, loginRequired, awaitingFirstSync, syncFailed, sourceUnavailable
@@ -57,7 +80,7 @@ nonisolated struct ScheduleCourseOccurrence: Equatable {
 }
 
 nonisolated struct ScheduleEnvelope: Codable, Equatable {
-    static let currentVersion = 1
+    static let currentVersion = ScheduleWireProtocol.schemaVersion
     static let maximumBytes = 60 * 1024 // Leave room for WCApplicationContext property-list overhead.
     static let staleInterval: TimeInterval = 24 * 60 * 60
 
@@ -81,7 +104,8 @@ nonisolated struct ScheduleEnvelope: Codable, Equatable {
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .millisecondsSince1970
             let header = try decoder.decode(Header.self, from: data)
-            guard header.schemaVersion == currentVersion, header.messageType == "schedule.snapshot" else {
+            guard header.schemaVersion == currentVersion,
+                  header.messageType == ScheduleWireProtocol.MessageType.snapshot else {
                 throw ScheduleFailure.unsupportedVersion
             }
             let value = try decoder.decode(Self.self, from: data)
@@ -106,7 +130,8 @@ nonisolated struct ScheduleEnvelope: Codable, Equatable {
     }
 
     func validate(now: Date = .now) throws {
-        guard schemaVersion == Self.currentVersion, messageType == "schedule.snapshot" else {
+        guard schemaVersion == Self.currentVersion,
+              messageType == ScheduleWireProtocol.MessageType.snapshot else {
             throw ScheduleFailure.unsupportedVersion
         }
         guard TimeZone(identifier: timezone) != nil,
@@ -195,7 +220,33 @@ nonisolated struct ScheduleEnvelope: Codable, Equatable {
     }
 
     func week(on date: Date) -> Int {
-        guard let start = self.date(semester.startDate), let end = self.date(semester.endDate) else { return 0 }
+        Self.teachingWeek(
+            at: date,
+            semesterStart: semester.startDate,
+            semesterEnd: semester.endDate,
+            timezone: timezone
+        )
+    }
+
+    static func teachingWeek(
+        at date: Date,
+        semesterStart: String,
+        semesterEnd: String,
+        timezone: String
+    ) -> Int {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: timezone) ?? .gmt
+        calendar.firstWeekday = 2
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.isLenient = false
+        guard let start = formatter.date(from: semesterStart),
+              let end = formatter.date(from: semesterEnd),
+              formatter.string(from: start) == semesterStart,
+              formatter.string(from: end) == semesterEnd else { return 0 }
         let day = calendar.startOfDay(for: date)
         guard day >= start, day <= end else { return 0 }
         return (calendar.dateComponents([.day], from: start, to: day).day ?? 0) / 7 + 1
