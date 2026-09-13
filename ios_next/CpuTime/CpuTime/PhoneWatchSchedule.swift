@@ -3,6 +3,7 @@ import CryptoKit
 import Foundation
 import SwiftUI
 
+#if !SWIFT_PACKAGE
 @MainActor
 private final class NativeWatchScheduleProvider: ScheduleDataProvider {
     weak var store: NativeScheduleStore?
@@ -142,7 +143,9 @@ struct WatchSyncStatusView: View {
     }
 }
 
-private extension NativeScheduleSnapshot {
+#endif
+
+extension NativeScheduleSnapshot {
     func watchEnvelope() throws -> ScheduleEnvelope {
         guard version == 1 else { throw ScheduleFailure.unsupportedVersion }
         guard auth.authenticated, error == nil,
@@ -152,10 +155,12 @@ private extension NativeScheduleSnapshot {
         let calendarWeeks = sourceCalendar.weeks.sorted { $0.week < $1.week }
         guard !calendarWeeks.isEmpty,
               calendarWeeks.map(\.week) == Array(1...calendarWeeks.count),
-              let semesterStart = calendarWeeks.first?.days.first,
-              let semesterEnd = calendarWeeks.last?.days.last else {
+              let firstWeek = calendarWeeks.first,
+              let lastWeek = calendarWeeks.last else {
             throw ScheduleFailure.invalidData
         }
+        let semesterStart = try firstWeek.watchWeekDays()[0]
+        let semesterEnd = try lastWeek.watchWeekDays()[6]
 
         let coveredWeeks: [Int]
         if completeSemester {
@@ -169,7 +174,10 @@ private extension NativeScheduleSnapshot {
         let schedulePeriods = periods.map {
             SchedulePeriod(number: $0.number, startTime: $0.startTime, endTime: $0.endTime)
         }.sorted { $0.number < $1.number }
-        guard !schedulePeriods.isEmpty else { throw ScheduleFailure.invalidData }
+        guard !schedulePeriods.isEmpty,
+              Set(schedulePeriods.map(\.number)).count == schedulePeriods.count else {
+            throw ScheduleFailure.invalidData
+        }
         let periodByNumber = Dictionary(uniqueKeysWithValues: schedulePeriods.map { ($0.number, $0) })
 
         var mappedCourses: [String: WatchCourse] = [:]
@@ -195,7 +203,13 @@ private extension NativeScheduleSnapshot {
                     ?? course.sourceKey.map { "source:\($0)" }
                     ?? ["official", data.currentSemester, String(cell.day), String(startPeriod), course.name]
                         .joined(separator: "|")
-                let digest = SHA256.hash(data: Data(sourceIdentity.utf8))
+                // One stable source may have different rooms, teachers or
+                // lengths in different weeks. Keep those variants separate;
+                // covered-week replacement removes obsolete variants on edits.
+                let variant = [sourceIdentity, course.name, course.teacher ?? "",
+                               course.location ?? "", String(cell.day),
+                               String(startPeriod), String(endPeriod), start.startTime, end.endTime]
+                let digest = SHA256.hash(data: try JSONEncoder().encode(variant))
                     .map { String(format: "%02x", $0) }.joined()
                 let previousWeeks = mappedCourses[digest]?.weeks ?? []
                 mappedCourses[digest] = WatchCourse(
@@ -240,4 +254,36 @@ private extension NativeScheduleSnapshot {
         )
     }
 
+}
+
+private extension NativeCalendarWeek {
+    /// Match the shared Web calendar's Sunday-first and missing-day handling.
+    func watchWeekDays() throws -> [String] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.isLenient = false
+        let anchors = days.enumerated().compactMap { index, value -> (Int, Date, Int)? in
+            let text = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let date = formatter.date(from: text), formatter.string(from: date) == text else { return nil }
+            let weekday = calendar.component(.weekday, from: date)
+            return (index, date, weekday == 1 ? 7 : weekday - 1)
+        }
+        guard let anchor = anchors.first else { throw ScheduleFailure.invalidData }
+        let sundayScore = anchors.filter { $0.2 == ($0.0 == 0 ? 7 : $0.0) }.count
+        let mondayScore = anchors.filter { $0.2 == $0.0 + 1 }.count
+        let offset = sundayScore > mondayScore ? (anchor.0 == 0 ? -1 : anchor.0 - 1) : anchor.0
+        guard let monday = calendar.date(byAdding: .day, value: -offset, to: anchor.1),
+              calendar.component(.weekday, from: monday) == 2 else { throw ScheduleFailure.invalidData }
+        return try (0..<7).map { offset in
+            guard let date = calendar.date(byAdding: .day, value: offset, to: monday) else {
+                throw ScheduleFailure.invalidData
+            }
+            return formatter.string(from: date)
+        }
+    }
 }

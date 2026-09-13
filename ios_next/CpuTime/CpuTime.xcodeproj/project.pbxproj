@@ -73,6 +73,7 @@
 		B20000000000000000000002 /* CPUWatchWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CPUWatchWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		D20000000000000000000001 /* SharedSigning.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = SharedSigning.xcconfig; sourceTree = "<group>"; };
 		D20000000000000000000002 /* Signing.local.xcconfig.example */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.local.xcconfig.example; sourceTree = "<group>"; };
+		D20000000000000000000004 /* DebugSigning.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = DebugSigning.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -204,6 +205,7 @@
 			isa = PBXGroup;
 			children = (
 				D20000000000000000000001 /* SharedSigning.xcconfig */,
+				D20000000000000000000004 /* DebugSigning.xcconfig */,
 				D20000000000000000000002 /* Signing.local.xcconfig.example */,
 			);
 			path = Configurations;
@@ -409,7 +411,7 @@
 /* Begin XCBuildConfiguration section */
 		000000000000000011000000 /* Debug configuration for PBXProject "CpuTime" */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = D20000000000000000000001 /* SharedSigning.xcconfig */;
+			baseConfigurationReference = D20000000000000000000004 /* DebugSigning.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				APPLETVOS_DEPLOYMENT_TARGET = 27.0;

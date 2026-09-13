@@ -51,6 +51,13 @@ private final class MockScheduleTransport: ScheduleTransport {
 }
 
 @MainActor
+private final class MockScheduleProvider: ScheduleDataProvider {
+    var onSnapshot: ((Data) -> Void)?
+    var onFailure: ((ScheduleFailure) -> Void)?
+    func refresh() {}
+}
+
+@MainActor
 private final class MockBackgroundTask: WatchBackgroundTaskCompleting {
     var expirationHandler: (() -> Void)?
     private(set) var completions = 0
@@ -59,6 +66,77 @@ private final class MockBackgroundTask: WatchBackgroundTaskCompleting {
 
 @MainActor
 final class WatchScheduleCoreTests: XCTestCase {
+    private func nativeSnapshot(days: [String], courses: [NativeScheduleCourse] = []) -> NativeScheduleSnapshot {
+        NativeScheduleSnapshot(
+            completeSemester: true, source: .jwxt,
+            fetchedAt: instant("2026-01-05T00:00:00Z"),
+            data: NativeScheduleResult(currentSemester: "test-semester", currentWeek: "1",
+                cells: [NativeScheduleCell(day: 1, bigSlot: 1, courses: courses)]),
+            calendar: NativeScheduleCalendar(weeks: [NativeCalendarWeek(week: 1, days: days)]),
+            auth: NativeScheduleAuth(authenticated: true)
+        )
+    }
+
+    func testWatchConversionNormalizesSundayFirstAndMissingCalendarDays() throws {
+        let monday = ["2026-01-05", "2026-01-06", "2026-01-07", "2026-01-08", "2026-01-09", "2026-01-10", "2026-01-11"]
+        for days in [monday,
+                     ["2026-01-04"] + Array(monday.prefix(6)),
+                     ["", "2026-01-05", "2026-01-06", "", "2026-01-08", "", "2026-01-10"],
+                     ["", "2026-01-06", "2026-01-07", "", "2026-01-09", "", ""]] {
+            let envelope = try nativeSnapshot(days: days).watchEnvelope()
+            try envelope.validate()
+            XCTAssertEqual(envelope.semester.startDate, "2026-01-05")
+            XCTAssertEqual(envelope.semester.endDate, "2026-01-11")
+        }
+    }
+
+    func testWatchConversionPreservesWeeklyRoomTeacherAndDurationVariants() throws {
+        let first = NativeScheduleCourse(nativeId: "same-source", name: "化学", teacher: "教师甲",
+            weekList: [1], location: "A", startSlot: 1, endSlot: 2)
+        let second = NativeScheduleCourse(nativeId: "same-source", name: "化学", teacher: "教师乙",
+            weekList: [2], location: "B", startSlot: 1, endSlot: 3)
+        let snapshot = NativeScheduleSnapshot(completeSemester: true, source: .jwxt,
+            fetchedAt: instant("2026-01-05T00:00:00Z"),
+            data: NativeScheduleResult(currentSemester: "test-semester", currentWeek: "1",
+                cells: [NativeScheduleCell(day: 1, bigSlot: 1, courses: [first, second])]),
+            calendar: NativeScheduleCalendar(weeks: [
+                NativeCalendarWeek(week: 1, days: ["2026-01-05"]),
+                NativeCalendarWeek(week: 2, days: ["2026-01-12"])]),
+            auth: NativeScheduleAuth(authenticated: true))
+        let envelope = try snapshot.watchEnvelope()
+        try envelope.validate()
+        XCTAssertEqual(envelope.courses.count, 2)
+        let weekOne = try XCTUnwrap(envelope.courses.first { $0.weeks == [1] })
+        let weekTwo = try XCTUnwrap(envelope.courses.first { $0.weeks == [2] })
+        XCTAssertEqual(weekOne.room, "A")
+        XCTAssertEqual(weekOne.teacher, "教师甲")
+        XCTAssertEqual(weekOne.endPeriod, 2)
+        XCTAssertEqual(weekTwo.room, "B")
+        XCTAssertEqual(weekTwo.teacher, "教师乙")
+        XCTAssertEqual(weekTwo.endPeriod, 3)
+    }
+
+    func testFirstTrustedPhoneSnapshotCannotMergePreviousAccountWeeks() throws {
+        let repository = CourseRepository(storage: MemoryScheduleStorage())
+        let previous = fixture()
+        try repository.accept(previous.encoded())
+        let transport = MockScheduleTransport()
+        let provider = MockScheduleProvider()
+        let coordinator = ScheduleSyncCoordinator(role: .phone, repository: repository, transport: transport, provider: provider)
+        coordinator.start()
+        let incoming = ScheduleEnvelope(schemaVersion: 1, messageType: ScheduleWireProtocol.MessageType.snapshot,
+            generatedAt: previous.generatedAt, semester: previous.semester, timezone: previous.timezone,
+            currentWeek: previous.currentWeek, coveredWeeks: [2], periods: previous.periods, courses: [])
+        provider.onSnapshot?(try incoming.encoded())
+        XCTAssertEqual(repository.snapshot?.coveredWeeks, [2])
+        XCTAssertEqual(repository.snapshot?.courses, [])
+        XCTAssertEqual(transport.sent.count, 1)
+        coordinator.clearForAccountChange()
+        transport.onConnectionChange?()
+        coordinator.sendLatest(force: true)
+        XCTAssertEqual(transport.sent.count, 1)
+    }
+
     private func fixture(
         generatedAt: Date? = nil,
         includePeriods: Bool = true,
@@ -258,16 +336,25 @@ final class WatchScheduleCoreTests: XCTestCase {
         XCTAssertEqual(changes, 1)
     }
 
-    func testPhoneStartIsIdempotentAndQueuesOneSnapshot() throws {
+    func testPhoneStartDoesNotSendUnverifiedCacheAndTrustedSnapshotUnlocksSending() throws {
         let repository = CourseRepository(storage: MemoryScheduleStorage())
         try repository.accept(fixture().encoded())
         let transport = MockScheduleTransport()
-        let coordinator = ScheduleSyncCoordinator(role: .phone, repository: repository, transport: transport)
+        let provider = MockScheduleProvider()
+        let coordinator = ScheduleSyncCoordinator(role: .phone, repository: repository, transport: transport, provider: provider)
 
         coordinator.start()
         coordinator.start()
 
         XCTAssertEqual(transport.activations, 1)
+        coordinator.foreground()
+        transport.onConnectionChange?()
+        coordinator.fail(.sourceUnavailable)
+        XCTAssertTrue(transport.sent.isEmpty)
+        XCTAssertNil(transport.statuses.last?.1)
+        provider.onSnapshot?(try fixture().encoded())
+        XCTAssertEqual(transport.sent.count, 1)
+        coordinator.sendLatest()
         XCTAssertEqual(transport.sent.count, 1)
     }
 
@@ -277,9 +364,11 @@ final class WatchScheduleCoreTests: XCTestCase {
         try repository.accept(original.encoded())
         let transport = MockScheduleTransport()
         transport.snapshotFailure = .syncFailed
-        let coordinator = ScheduleSyncCoordinator(role: .phone, repository: repository, transport: transport)
+        let provider = MockScheduleProvider()
+        let coordinator = ScheduleSyncCoordinator(role: .phone, repository: repository, transport: transport, provider: provider)
 
         coordinator.start()
+        provider.onSnapshot?(try original.encoded())
 
         XCTAssertEqual(coordinator.state(), .failed(.syncFailed))
         XCTAssertEqual(repository.snapshot, original)

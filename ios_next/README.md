@@ -71,7 +71,7 @@ xcodebuild -project ios_next/CpuTime/CpuTime.xcodeproj -scheme CPUWatch -destina
 
 登录并完成教务授权后，首次成功加载原生课表会自动配置尚未设置的小组件（每次启动／账号变化后最多自动尝试一次，失败可手动重试）。在原生课表点击“小组件”可查看配置结果、选择主题或手动重新配置，再通过系统主屏幕／锁屏编辑界面添加。配置请求沿用 WKWebView 的同源 Cookie 与 CSRF 校验；扩展只保存专用课表订阅地址，不复制登录 Cookie。旧网页的 `CPUIOS` 小组件配置及主题接口也已接通。
 
-工程包含 `CPUWebWidgets`、`CPUWatch` 和 `CPUWatchWidgets` targets，并将 Watch App 嵌入 iPhone App、Watch 小组件嵌入 Watch App。四个 target 共用 `Configurations/SharedSigning.xcconfig` 中的 Bundle ID 前缀和 App Group。其他开发者可将 `Signing.local.xcconfig.example` 复制为被 Git 忽略的 `Signing.local.xcconfig`，改成自己的 Team ID、Bundle ID 前缀和已注册 App Group，然后使用 Xcode 自动签名。iPhone App、两个小组件和 Watch App 必须使用同一 App Group。
+工程包含 `CPUWebWidgets`、`CPUWatch` 和 `CPUWatchWidgets` targets，并将 Watch App 嵌入 iPhone App、Watch 小组件嵌入 Watch App。四个 target 共用 `Configurations/SharedSigning.xcconfig` 中的默认标识。其他开发者可将 `Signing.local.xcconfig.example` 复制为被 Git 忽略的 `Signing.local.xcconfig`，改成自己的 Team ID、Bundle ID 前缀和已注册 App Group，然后使用 Debug 配置自动签名运行。`DebugSigning.xcconfig` 只在 Debug 加载本地覆盖；Release 保持上游正式发布配置，不读取本地自签值。使用本地自签的开发者应选择 Run（Debug）；正式 Archive 仍需要上游发布证书和描述文件。iPhone App、两个小组件和 Watch App 必须使用同一 App Group。
 
 点击 iPhone 小组件通过 `cputime-next://schedule` 打开原生课表并重新加载当前学期／本周，避免沿用旧的浏览周次。
 

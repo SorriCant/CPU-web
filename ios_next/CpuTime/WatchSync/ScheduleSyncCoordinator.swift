@@ -52,6 +52,9 @@ final class ScheduleSyncCoordinator {
     private var sending = false
     private var refreshTimeout: Task<Void, Never>?
     private var lastSentData: Data?
+    // The phone's persisted Watch cache has no current-session proof. Only a
+    // snapshot published by the authenticated native store unlocks sending.
+    private var phoneSnapshotValidated = false
     private(set) var refreshing = false
     private(set) var error: ScheduleFailure?
     private(set) var lastQueuedAt: Date?
@@ -116,8 +119,13 @@ final class ScheduleSyncCoordinator {
     private func acceptPhoneSnapshot(_ data: Data) {
         guard role.sendsSnapshots else { return }
         do {
+            if !phoneSnapshotValidated {
+                _ = try ScheduleEnvelope.decode(data)
+                try repository.clear()
+            }
             let previous = repository.snapshot
             let retained = try repository.accept(data)
+            phoneSnapshotValidated = true
             refreshing = false
             error = nil
             if previous != retained { onSnapshotChange?() }
@@ -127,7 +135,7 @@ final class ScheduleSyncCoordinator {
     }
 
     private func acknowledge(_ fingerprint: String, at receivedAt: Date) {
-        guard role.sendsSnapshots, let snapshot = repository.snapshot,
+        guard role.sendsSnapshots, phoneSnapshotValidated, let snapshot = repository.snapshot,
               fingerprint == (try? snapshot.fingerprint()), receivedAt <= Date.now.addingTimeInterval(300),
               receivedAt >= snapshot.generatedAt else { return }
         lastSyncedAt = receivedAt
@@ -182,7 +190,7 @@ final class ScheduleSyncCoordinator {
     }
 
     func sendLatest(force: Bool = false) {
-        guard role.sendsSnapshots, !sending, let snapshot = repository.snapshot else { return }
+        guard role.sendsSnapshots, phoneSnapshotValidated, !sending, let snapshot = repository.snapshot else { return }
         let connection = transport.connection
         guard connection.activated, connection.paired, connection.installed else { return }
         sending = true
@@ -210,6 +218,7 @@ final class ScheduleSyncCoordinator {
     /// A normal JWXT authorization expiry does not use this path, so an offline
     /// timetable remains available while the website account is still the same.
     func clearForAccountChange() {
+        phoneSnapshotValidated = false
         do {
             try repository.clear()
             lastSentData = nil
@@ -242,7 +251,7 @@ final class ScheduleSyncCoordinator {
         guard role.sendsSnapshots, let error, [.loginRequired, .sourceUnavailable, .invalidData, .unsupportedVersion].contains(error),
               transport.connection.activated, transport.connection.paired, transport.connection.installed else { return }
         do {
-            try transport.updateStatus(error, snapshot: repository.snapshot?.encoded())
+            try transport.updateStatus(error, snapshot: phoneSnapshotValidated ? repository.snapshot?.encoded() : nil)
             lastSentData = nil // A later recovery must replace the status, even if course data is unchanged.
         } catch { /* Keep the original actionable provider error. Retry on the next connection change. */ }
     }

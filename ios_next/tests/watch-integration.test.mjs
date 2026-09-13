@@ -8,6 +8,18 @@ const defaultRoot = fileURLToPath(new URL('../..', import.meta.url));
 const root = process.env.CPU_REPO_ROOT || defaultRoot;
 const read = path => readFile(`${root}/${path}`, 'utf8');
 
+function configuration(project, label) {
+  const start = project.indexOf(`/* ${label} */ = {`);
+  assert.notEqual(start, -1, `missing ${label}`);
+  const open = project.indexOf('{', start);
+  let depth = 0;
+  for (let index = open; index < project.length; index++) {
+    if (project[index] === '{') depth++;
+    if (project[index] === '}' && --depth === 0) return project.slice(open, index + 1);
+  }
+  assert.fail(`unterminated ${label}`);
+}
+
 test('watch app and complication belong to the active ios_next project', async () => {
   await Promise.all([
     access(`${root}/ios_next/CpuTime/CPUWatch/CPUWatchApp.swift`, constants.R_OK),
@@ -50,21 +62,22 @@ test('sign out clears account-scoped watch data without sending the old snapshot
 
 test('self signing values are configurable and local overrides stay ignored', async () => {
   const config = await read('ios_next/CpuTime/Configurations/SharedSigning.xcconfig');
+  const debugConfig = await read('ios_next/CpuTime/Configurations/DebugSigning.xcconfig');
   const project = await read('ios_next/CpuTime/CpuTime.xcodeproj/project.pbxproj');
   const ignore = await read('.gitignore');
   const entitlement = await read('ios_next/CpuTime/CPUWatch/CPUWatch.entitlements');
   assert.match(config, /CPU_APP_BUNDLE_IDENTIFIER/);
   assert.match(config, /CPU_APP_GROUP_IDENTIFIER/);
+  assert.doesNotMatch(config, /Signing\.local/);
+  assert.match(debugConfig, /#include "SharedSigning\.xcconfig"/);
+  assert.match(debugConfig, /#include\? "Signing\.local\.xcconfig"/);
+  assert.match(configuration(project, 'Debug configuration for PBXProject "CpuTime"'), /DebugSigning\.xcconfig/);
+  assert.match(configuration(project, 'Release configuration for PBXProject "CpuTime"'), /SharedSigning\.xcconfig/);
   assert.match(ignore, /ios_next\/CpuTime\/Configurations\/Signing\.local\.xcconfig/);
   assert.match(entitlement, /\$\(CPU_APP_GROUP_IDENTIFIER\)/);
 
   for (const target of ['CpuTime', 'CPUWebWidgets', 'CPUWatch', 'CPUWatchWidgets']) {
-    const marker = `/* Debug configuration for PBXNativeTarget "${target}" */`;
-    const start = project.indexOf(marker);
-    const end = project.indexOf('\n\t\t\tname = Debug;', start);
-    assert.notEqual(start, -1, `missing Debug configuration for ${target}`);
-    assert.notEqual(end, -1, `unterminated Debug configuration for ${target}`);
-    const block = project.slice(start, end);
+    const block = configuration(project, `Debug configuration for PBXNativeTarget "${target}"`);
     assert.match(
       block,
       /DEVELOPMENT_TEAM = "\$\(CPU_DEVELOPMENT_TEAM\)";/,
