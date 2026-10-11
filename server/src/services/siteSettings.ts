@@ -63,6 +63,8 @@ export type AiServiceConfig = {
   assistantContextMaxMessages?: number;
   /** 拾间 AI 单条历史消息的字符上限；0 表示不额外截断。 */
   assistantContextMaxCharsPerMessage?: number;
+  /** 管理员手动停用：所有场景跳过这个服务，改用各自线路里的下一个；只在为 true 时存储。 */
+  disabled?: boolean;
 };
 export const AI_SERVICE_SCENES = [
   "assistant",
@@ -322,6 +324,7 @@ function normalizeAiServiceEntries(input: unknown): AiServiceConfig[] {
       apiKey,
       assistantContextMaxMessages: assistantContext.maxMessages,
       assistantContextMaxCharsPerMessage: assistantContext.maxCharsPerMessage,
+      ...(item.disabled === true ? { disabled: true } : {}),
     });
   }
   return result;
@@ -546,7 +549,75 @@ export function resolveAiServiceCandidatesForScene(
       ...(fallbackRoute.model ? { model: fallbackRoute.model } : {}),
     });
   }
-  return candidates;
+  const usable = candidates.filter((candidate) => !isAiServiceDisabled(services, candidate.serviceId));
+  // 整条线路都被停用时仍返回主服务，但去掉地址和密钥，调用方会按“未配置”处理而不是继续发请求。
+  return usable.length ? usable : [{ ...primary, apiUrl: "", apiKey: "" }];
+}
+
+function isAiServiceDisabled(services: AiServiceConfig[], serviceId: string) {
+  return services.some((service) => service.id === serviceId && service.disabled === true);
+}
+
+type AiSceneModelField = "assistantModel" | "smartPostModel" | "songReviewModel" | "aiReviewModel"
+  | "qqGroupAdReviewModel" | "imageReviewModel" | "videoReviewModel";
+type AiSceneFallbackModelsField = "smartPostFallbackModels" | "songReviewFallbackModels" | "aiReviewFallbackModels"
+  | "qqGroupAdReviewFallbackModels" | "imageReviewFallbackModels" | "videoReviewFallbackModels";
+
+/** 每个场景的主模型字段；网课解题按档位存模型，不在这里。 */
+export const AI_SCENE_MODEL_FIELDS: Record<Exclude<AiServiceScene, "learning-assistant">, {
+  model: AiSceneModelField;
+  fallbackModels?: AiSceneFallbackModelsField;
+}> = {
+  assistant: { model: "assistantModel" },
+  "smart-post": { model: "smartPostModel", fallbackModels: "smartPostFallbackModels" },
+  "song-review": { model: "songReviewModel", fallbackModels: "songReviewFallbackModels" },
+  "text-review": { model: "aiReviewModel", fallbackModels: "aiReviewFallbackModels" },
+  "qq-group-ad": { model: "qqGroupAdReviewModel", fallbackModels: "qqGroupAdReviewFallbackModels" },
+  "image-review": { model: "imageReviewModel", fallbackModels: "imageReviewFallbackModels" },
+  "video-review": { model: "videoReviewModel", fallbackModels: "videoReviewFallbackModels" },
+};
+
+/**
+ * 把“已停用的服务”折算进配置：主服务被停用的场景改由线路里第一个未停用的服务承载，
+ * 连同它的模型一起顶上来，其余被停用的回退服务从线路里去掉。
+ * 各业务读到的就是一份可以直接使用的配置，不需要各自判断停用状态。
+ * 传入的对象会被就地修改，调用方应传入副本。
+ */
+export function applyAiServiceAvailability(config: SiteConfig): SiteConfig {
+  if (!config.aiServices.some((service) => service.disabled === true)) return config;
+  for (const scene of AI_SERVICE_SCENES) {
+    const primaryId = sceneServiceId(config, scene);
+    const fallbacks = (config.aiServiceFallbacks[scene] || [])
+      .filter((route) => !isAiServiceDisabled(config.aiServices, route.serviceId));
+    if (!isAiServiceDisabled(config.aiServices, primaryId)) {
+      config.aiServiceFallbacks[scene] = fallbacks;
+      continue;
+    }
+    const promoted = fallbacks.shift();
+    const service = promoted && config.aiServices.find((item) => item.id === promoted.serviceId);
+    config.aiServiceFallbacks[scene] = fallbacks;
+    if (!promoted || !service) {
+      const stopped = config.aiServices.find((item) => item.id === primaryId);
+      if (stopped) applyAiServiceToLegacyFields(config, scene, { ...stopped, apiUrl: "", apiKey: "" });
+      continue;
+    }
+    applyAiServiceToLegacyFields(config, scene, service);
+    if (!promoted.model) continue;
+    if (scene === "learning-assistant") {
+      config.learningAssistantModel = promoted.model;
+      for (const tier of Object.values(config.learningAssistantTiers)) tier.model = promoted.model;
+      continue;
+    }
+    const fields = AI_SCENE_MODEL_FIELDS[scene];
+    config[fields.model] = promoted.model;
+    // 备选模型是按原主服务挑的，换了服务和模型后不再适用。
+    if (fields.fallbackModels) config[fields.fallbackModels] = "";
+  }
+  if (isAiServiceDisabled(config.aiServices, config.qqGroupAdReviewPeakServiceId)) {
+    config.qqGroupAdReviewPeakServiceId = config.qqGroupAdReviewServiceId;
+    config.qqGroupAdReviewPeakModel = "";
+  }
+  return config;
 }
 
 function resolveAiServiceId(
@@ -1740,7 +1811,13 @@ export function isFeatureOn(f: FeatureKey): boolean {
   return cache[f];
 }
 
+/** 业务读取的配置：已停用的 AI 服务已经从各场景的线路里折算掉。 */
 export function getSiteConfig(): SiteConfig {
+  return applyAiServiceAvailability(getStoredSiteConfig());
+}
+
+/** 管理后台读写的配置：原样保留每个场景配置的主服务、模型和回退线路。 */
+export function getStoredSiteConfig(): SiteConfig {
   const aiServices = normalizeAiServiceList(
     configCache.aiServices,
     buildAiServicesFromLegacy(configCache),
@@ -2367,6 +2444,26 @@ function sanitizeCommunityTrustConfig() {
   );
 }
 
+/** 没带停用标记的服务（旧版管理页保存的）沿用已存的状态，避免一次无关的保存把停用的服务重新放开。 */
+function keepStoredAiServiceDisabledFlags(input: unknown) {
+  if (!Array.isArray(input)) return input;
+  return input.map((item) => {
+    if (!item || typeof item !== "object" || (item as AiServiceConfig).disabled !== undefined) return item;
+    const stored = configCache.aiServices.find((service) => service.id === (item as AiServiceConfig).id);
+    return stored?.disabled ? { ...item, disabled: true } : item;
+  });
+}
+
+/** 立即停用或恢复一个 AI 服务，其余配置不动。 */
+export async function setAiServiceDisabled(serviceId: string, disabled: boolean): Promise<SiteConfig> {
+  const services = getStoredSiteConfig().aiServices;
+  if (!services.some((service) => service.id === serviceId)) throw new Error("AI 服务不存在");
+  await setAiReviewConfig({
+    aiServices: services.map((service) => (service.id === serviceId ? { ...service, disabled } : service)),
+  });
+  return getStoredSiteConfig();
+}
+
 export async function setAiReviewConfig(input: Partial<SiteConfig>): Promise<SiteConfig> {
   const legacySource = {
     ...configCache,
@@ -2378,7 +2475,7 @@ export async function setAiReviewConfig(input: Partial<SiteConfig>): Promise<Sit
     smartPostServiceId: input.smartPostServiceId ?? configCache.smartPostServiceId,
   };
   let aiServices = normalizeAiServiceList(
-    input.aiServices !== undefined ? input.aiServices : configCache.aiServices,
+    input.aiServices !== undefined ? keepStoredAiServiceDisabledFlags(input.aiServices) : configCache.aiServices,
     buildAiServicesFromLegacy(legacySource),
   );
   if (input.aiServices === undefined) {
@@ -2449,14 +2546,14 @@ export async function setAiReviewConfig(input: Partial<SiteConfig>): Promise<Sit
     aiReviewProvider: textReviewService.provider,
     aiReviewApiUrl: textReviewService.apiUrl,
     aiReviewModel: String(input.aiReviewModel ?? configCache.aiReviewModel ?? "deepseek-v4-flash").trim() || "deepseek-v4-flash",
-    aiReviewFallbackModels: normalizeFallbackModelList(input.aiReviewFallbackModels, input.aiReviewModel ?? configCache.aiReviewModel),
+    aiReviewFallbackModels: normalizeFallbackModelList(input.aiReviewFallbackModels ?? configCache.aiReviewFallbackModels, input.aiReviewModel ?? configCache.aiReviewModel),
     aiReviewApiKey: textReviewService.apiKey,
     qqGroupAdReviewServiceId: qqService.id,
     qqGroupAdReviewEnabled: input.qqGroupAdReviewEnabled ?? configCache.qqGroupAdReviewEnabled,
     qqGroupAdReviewProvider: qqService.provider,
     qqGroupAdReviewApiUrl: qqService.apiUrl,
     qqGroupAdReviewModel: String(input.qqGroupAdReviewModel ?? configCache.qqGroupAdReviewModel ?? "deepseek-v4-flash").trim() || "deepseek-v4-flash",
-    qqGroupAdReviewFallbackModels: normalizeFallbackModelList(input.qqGroupAdReviewFallbackModels, input.qqGroupAdReviewModel ?? configCache.qqGroupAdReviewModel),
+    qqGroupAdReviewFallbackModels: normalizeFallbackModelList(input.qqGroupAdReviewFallbackModels ?? configCache.qqGroupAdReviewFallbackModels, input.qqGroupAdReviewModel ?? configCache.qqGroupAdReviewModel),
     qqGroupAdReviewApiKey: qqService.apiKey,
     qqGroupAdReviewPeakEnabled: input.qqGroupAdReviewPeakEnabled ?? configCache.qqGroupAdReviewPeakEnabled,
     qqGroupAdReviewPeakStart: normalizeTimeOfDay(input.qqGroupAdReviewPeakStart, configCache.qqGroupAdReviewPeakStart),
@@ -2470,7 +2567,7 @@ export async function setAiReviewConfig(input: Partial<SiteConfig>): Promise<Sit
     imageReviewEnabled: input.imageReviewEnabled ?? configCache.imageReviewEnabled,
     imageReviewApiUrl: imageService.apiUrl,
     imageReviewModel: String(input.imageReviewModel ?? configCache.imageReviewModel ?? "gpt-4o-mini").trim() || "gpt-4o-mini",
-    imageReviewFallbackModels: normalizeFallbackModelList(input.imageReviewFallbackModels, input.imageReviewModel ?? configCache.imageReviewModel),
+    imageReviewFallbackModels: normalizeFallbackModelList(input.imageReviewFallbackModels ?? configCache.imageReviewFallbackModels, input.imageReviewModel ?? configCache.imageReviewModel),
     imageReviewApiKey: imageService.apiKey,
     imageReviewSystemPrompt: resolvePromptTemplate(input.imageReviewSystemPrompt, configCache.imageReviewSystemPrompt, DEFAULT_IMAGE_REVIEW_PROMPTS.system),
     imageReviewUserPrompt: resolvePromptTemplate(input.imageReviewUserPrompt, configCache.imageReviewUserPrompt, DEFAULT_IMAGE_REVIEW_PROMPTS.user),
@@ -2481,7 +2578,7 @@ export async function setAiReviewConfig(input: Partial<SiteConfig>): Promise<Sit
     videoReviewEnabled: input.videoReviewEnabled ?? configCache.videoReviewEnabled,
     videoReviewApiUrl: videoService.apiUrl,
     videoReviewModel: String(input.videoReviewModel ?? configCache.videoReviewModel ?? "gpt-4o-mini").trim() || "gpt-4o-mini",
-    videoReviewFallbackModels: normalizeFallbackModelList(input.videoReviewFallbackModels, input.videoReviewModel ?? configCache.videoReviewModel),
+    videoReviewFallbackModels: normalizeFallbackModelList(input.videoReviewFallbackModels ?? configCache.videoReviewFallbackModels, input.videoReviewModel ?? configCache.videoReviewModel),
     videoReviewApiKey: videoService.apiKey,
     videoReviewSystemPrompt: resolvePromptTemplate(input.videoReviewSystemPrompt, configCache.videoReviewSystemPrompt, DEFAULT_VIDEO_REVIEW_PROMPTS.system),
     videoReviewUserPrompt: resolvePromptTemplate(input.videoReviewUserPrompt, configCache.videoReviewUserPrompt, DEFAULT_VIDEO_REVIEW_PROMPTS.user),

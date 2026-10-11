@@ -25,225 +25,46 @@
       </template>
     </el-alert>
 
-    <section class="settings-card provider-card" :class="{ 'is-config-disabled': Boolean(configLoadError) }" v-loading="loadingConfig">
+    <p class="routing-hint">各场景用哪个服务、哪个模型，以及出故障时切到哪里，都在“服务线路”里配置；这里只管功能开关、阈值和 Prompt。</p>
+
+    <section class="settings-card" :class="{ 'is-config-disabled': Boolean(configLoadError) }" v-loading="loadingConfig">
       <div class="section-head">
         <div>
-          <h3 class="section-title">AI 服务池</h3>
-          <p class="section-desc">每个服务只填写一次地址和密钥，再把拾间 AI、网课解题、文字审核及其他识别场景分别路由到需要的厂家。</p>
+          <h3 class="section-title">网课解题三档策略</h3>
+          <p class="section-desc">用户看到的是答题模式；模型、实际推理强度和点数倍率均由服务端配置，客户端不能覆盖。</p>
         </div>
-        <div class="provider-actions cpu-button-row">
-          <el-button :loading="loadingAllModels" :disabled="!form.aiServices.length" @click="loadAllModels">
-            刷新全部模型列表
-          </el-button>
-          <el-button type="primary" :loading="saving" :disabled="saving || Boolean(configLoadError)" @click="saveConfig">
-            保存 AI 配置
-          </el-button>
-        </div>
+        <el-button type="primary" :loading="saving" :disabled="saving || Boolean(configLoadError)" @click="saveConfig">
+          保存三档策略
+        </el-button>
       </div>
-
-      <div class="service-pool">
-        <div class="service-pool-head">
+      <div class="learning-tier-grid">
+        <article v-for="tier in learningTierAssignments" :key="tier.key" class="learning-tier-card">
           <div>
-            <h4 class="card-title">服务厂家配置</h4>
-            <p class="desc">地址和 API Key 只在这里维护。Ollama 的 API Key 可以留空，地址填写运行服务端机器能够访问的地址。</p>
+            <strong>{{ tier.label }}</strong>
+            <small>{{ tier.description }}</small>
+            <small class="model-source">模型：{{ form.learningAssistantTiers[tier.key].model }}（在服务线路里修改）</small>
           </div>
-          <el-button type="primary" plain @click="addAiService">添加服务</el-button>
-        </div>
-        <article v-for="(service, index) in form.aiServices" :key="service.id" class="service-card">
-          <div class="service-card-head">
-            <span class="service-index">服务 {{ index + 1 }}</span>
-            <div class="service-card-actions cpu-button-row">
-              <el-button size="small" plain :loading="serviceCatalogState(service.id).loading" :disabled="!service.apiUrl.trim()" @click="loadModelsForService(service.id)">
-                刷新此服务模型
-              </el-button>
-              <el-button text type="danger" :disabled="form.aiServices.length <= 1" @click="removeAiService(service.id)">
-                删除
-              </el-button>
-            </div>
-          </div>
-          <div class="service-grid">
-            <label class="ai-row">
-              <span class="ai-label">服务名称</span>
-              <el-input v-model="service.name" maxlength="80" placeholder="例如：本地 Ollama" />
-            </label>
-            <label class="ai-row">
-              <span class="ai-label">服务厂家 / 协议</span>
-              <el-select v-model="service.provider" filterable allow-create default-first-option @change="handleServiceProviderChange(service)">
-                <el-option v-for="option in serviceProviderOptions" :key="option.value" :label="option.label" :value="option.value" />
-              </el-select>
-            </label>
-            <label class="ai-row ai-row--stretch">
-              <span class="ai-label">API 地址</span>
-              <el-input
-                v-model="service.apiUrl"
-                maxlength="240"
-                @change="invalidateServiceCatalog(service.id)"
-                :placeholder="service.provider.toLowerCase() === 'ollama' ? 'http://127.0.0.1:11434' : '支持 /v1/responses 或 /v1/chat/completions'"
-              />
-            </label>
-            <label class="ai-row ai-row--stretch">
-              <span class="ai-label">API Key</span>
-              <el-input
-                v-model="service.apiKey"
-                maxlength="240"
-                show-password
-                :placeholder="service.provider.toLowerCase() === 'ollama' ? 'Ollama 可留空' : 'sk-...'"
-              />
-            </label>
-            <label class="ai-row">
-              <span class="ai-label">拾间AI历史消息数</span>
-              <el-input-number
-                v-model="service.assistantContextMaxMessages"
-                :min="0"
-                :max="60"
-                controls-position="right"
-              />
-            </label>
-            <label class="ai-row">
-              <span class="ai-label">单条历史字符上限</span>
-              <el-input-number
-                v-model="service.assistantContextMaxCharsPerMessage"
-                :min="0"
-                :max="4000"
-                :step="100"
-                controls-position="right"
-              />
-            </label>
-          </div>
-          <small class="field-note">上下文配置仅用于拾间 AI；0 表示不额外限制。GPT / 云端服务建议 0 / 0，本地 Ollama 建议 2 / 800。</small>
-          <small class="field-note">
-            {{ service.provider.toLowerCase() === "ollama"
-              ? "Ollama 会使用 /v1/chat/completions；模型名称填写本机已安装的 tag，例如 qwen3:8b。"
-              : "服务端会根据地址自动识别 Responses 或 Chat Completions 协议。" }}
-          </small>
-          <small class="field-note service-catalog-status">{{ serviceCatalogStatus(service.id) }}</small>
+          <label>
+            <span>推理强度</span>
+            <el-select v-model="form.learningAssistantTiers[tier.key].reasoningEffort">
+              <el-option v-for="effort in reasoningEffortOptions" :key="effort.value" :label="effort.label" :value="effort.value" />
+            </el-select>
+          </label>
+          <label>
+            <span>点数倍率</span>
+            <el-input-number v-model="form.learningAssistantTiers[tier.key].pointMultiplier" :min="0.1" :max="20" :step="0.1" :precision="1" />
+          </label>
+          <label class="learning-tier-free-toggle">
+            <span>限免期间开放</span>
+            <el-switch
+              v-model="form.learningAssistantTiers[tier.key].freeInUnlimited"
+              inline-prompt
+              active-text="免费"
+              inactive-text="停用"
+            />
+            <small>关闭后，临时免登录阶段不会向用户提供该档位。</small>
+          </label>
         </article>
-      </div>
-
-      <div class="service-routing">
-        <div>
-          <h4 class="card-title">识别场景路由</h4>
-          <p class="desc">每个场景单独选择主服务和回退服务；主服务出现可重试的临时故障并完成重试后，才按顺序尝试已确认支持所选模型的回退服务。</p>
-        </div>
-        <div class="routing-grid">
-          <article v-for="item in serviceAssignments" :key="item.key" class="route-card">
-            <label class="ai-row">
-              <span class="ai-label">{{ item.label }}主服务</span>
-              <el-select v-model="form[item.key]" @change="normalizeFallbackServices">
-                <el-option v-for="service in form.aiServices" :key="`${item.key}-${service.id}`" :label="service.name" :value="service.id" />
-              </el-select>
-            </label>
-            <label class="ai-row">
-              <span class="ai-label">失败回退服务</span>
-              <el-select
-                :model-value="fallbackServiceIds(item)"
-                multiple
-                collapse-tags
-                collapse-tags-tooltip
-                :max-collapse-tags="2"
-                placeholder="不设置回退"
-                @update:model-value="setFallbackServices(item, $event)"
-              >
-                <el-option
-                  v-for="service in fallbackServiceOptions(item)"
-                  :key="`${item.key}-fallback-${service.id}`"
-                  :label="service.name"
-                  :value="service.id"
-                />
-              </el-select>
-            </label>
-            <div v-if="fallbackRoutes(item).length" class="fallback-model-list">
-              <div v-for="route in fallbackRoutes(item)" :key="`${item.key}-fallback-model-${route.serviceId}`" class="fallback-model-row">
-                <span class="fallback-model-service">{{ serviceForScene(route.serviceId)?.name || route.serviceId }}</span>
-                <el-select
-                  v-model="route.model"
-                  class="fallback-model-select"
-                  filterable
-                  allow-create
-                  default-first-option
-                  placeholder="选择该服务的模型"
-                  @focus="loadModelsForService(route.serviceId, { silent: true })"
-                >
-                  <el-option
-                    v-for="model in modelOptionsForService(route.serviceId, [route.model])"
-                    :key="`${item.key}-${route.serviceId}-${model}`"
-                    :label="model"
-                    :value="model"
-                  />
-                </el-select>
-              </div>
-            </div>
-            <small class="field-note route-fallback-note">仅在主服务出现可重试的临时故障并完成重试后才回退；每个回退服务使用这里指定的模型，留空时只有确认存在主模型才会尝试。</small>
-          </article>
-        </div>
-      </div>
-
-      <el-alert
-        type="info"
-        :closable="false"
-        show-icon
-        :title="modelCatalogSummary"
-      />
-
-      <div class="model-grid">
-        <label v-for="item in modelAssignments" :key="item.key" class="model-field">
-          <span>{{ item.label }}</span>
-          <small>{{ item.description }}</small>
-          <small class="model-source">模型来源：{{ modelSourceLabel(item.key) }}</small>
-          <el-select
-            v-model="form[item.key]"
-            filterable
-            allow-create
-            default-first-option
-            placeholder="选择或输入模型 ID"
-          >
-            <el-option v-for="model in modelOptionsForField(item.key)" :key="`${item.key}-${model}`" :label="model" :value="model" />
-          </el-select>
-        </label>
-      </div>
-
-      <div class="learning-tier-panel">
-        <div class="section-head learning-tier-head">
-          <div>
-            <h4 class="card-title">网课解题三档策略</h4>
-            <p class="section-desc">用户看到的是答题模式；模型、实际推理强度和点数倍率均由服务端配置，客户端不能覆盖。</p>
-          </div>
-        </div>
-        <div class="learning-tier-grid">
-          <article v-for="tier in learningTierAssignments" :key="tier.key" class="learning-tier-card">
-            <div>
-              <strong>{{ tier.label }}</strong>
-              <small>{{ tier.description }}</small>
-            </div>
-            <label>
-              <span>模型</span>
-              <small class="model-source">模型来源：{{ learningServiceName }}</small>
-              <el-select v-model="form.learningAssistantTiers[tier.key].model" filterable allow-create default-first-option>
-                <el-option v-for="model in learningModelOptions" :key="`${tier.key}-${model}`" :label="model" :value="model" />
-              </el-select>
-            </label>
-            <label>
-              <span>推理强度</span>
-              <el-select v-model="form.learningAssistantTiers[tier.key].reasoningEffort">
-                <el-option v-for="effort in reasoningEffortOptions" :key="effort.value" :label="effort.label" :value="effort.value" />
-              </el-select>
-            </label>
-            <label>
-              <span>点数倍率</span>
-              <el-input-number v-model="form.learningAssistantTiers[tier.key].pointMultiplier" :min="0.1" :max="20" :step="0.1" :precision="1" />
-            </label>
-            <label class="learning-tier-free-toggle">
-              <span>限免期间开放</span>
-              <el-switch
-                v-model="form.learningAssistantTiers[tier.key].freeInUnlimited"
-                inline-prompt
-                active-text="免费"
-                inactive-text="停用"
-              />
-              <small>关闭后，临时免登录阶段不会向用户提供该档位。</small>
-            </label>
-          </article>
-        </div>
       </div>
     </section>
 
@@ -284,7 +105,7 @@
       <label class="ai-row"><span class="ai-label">启用歌曲审核</span><el-switch v-model="form.songReviewEnabled" inline-prompt active-text="开" inactive-text="关" /></label>
       <label class="ai-row"><span class="ai-label">备用模型</span><el-input v-model="form.songReviewFallbackModels" maxlength="400" placeholder="逗号分隔；主模型失败后依次尝试" /></label>
       <label class="ai-row"><span class="ai-label">选曲规则</span><el-input v-model="form.songReviewRules" type="textarea" :rows="4" maxlength="6000" show-word-limit /></label>
-      <p class="desc">服务及模型在上方“歌曲审核”场景单独配置。AI核对歌词和公开来源；证据不足时请投稿人阅读建议并确认；调用失败只重试，不启动撤回倒计时。修改规则后原审核结果需重新确认。</p>
+      <p class="desc">服务和模型在“服务线路”的歌曲审核一行配置。AI核对歌词和公开来源；证据不足时请投稿人阅读建议并确认；调用失败只重试，不启动撤回倒计时。修改规则后原审核结果需重新确认。</p>
       <el-button type="primary" :loading="saving" :disabled="saving || Boolean(configLoadError)" @click="saveConfig">保存歌曲审核配置</el-button>
     </section>
 
@@ -405,7 +226,7 @@
           <el-select
             v-model="form.qqGroupAdReviewPeakServiceId"
             placeholder="选择模型提供商"
-            @change="loadModelsForService(form.qqGroupAdReviewPeakServiceId, { silent: true })"
+            @change="loadPeakModels"
           >
             <el-option
               v-for="service in form.aiServices"
@@ -424,10 +245,10 @@
             clearable
             default-first-option
             placeholder="留空则沿用普通广告模型"
-            @focus="loadModelsForService(form.qqGroupAdReviewPeakServiceId, { silent: true })"
+            @focus="loadPeakModels"
           >
             <el-option
-              v-for="model in modelOptionsForService(form.qqGroupAdReviewPeakServiceId, [form.qqGroupAdReviewPeakModel])"
+              v-for="model in peakModelOptions()"
               :key="`qq-group-ad-peak-${model}`"
               :label="model"
               :value="model"
@@ -718,7 +539,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
   adminApi,
@@ -726,15 +547,12 @@ import {
   type ForumImageSweepResult,
   type ForumVideoQueueRow,
   type ForumVideoSweepResult,
-  type AiServiceConfig,
-  type AiServiceFallbackRoute,
   type SiteConfig,
   type SitePromptDefaults,
 } from "@/api/admin";
 import { fmtDate } from "@/utils/format";
 
 const loadingConfig = ref(false);
-const loadingAllModels = ref(false);
 const loadingLogs = ref(false);
 const saving = ref(false);
 const sweepingImages = ref(false);
@@ -755,13 +573,7 @@ const lastImageSweepSummary = ref("");
 const lastVideoSweepSummary = ref("");
 const videoRows = ref<ForumVideoQueueRow[]>([]);
 const promptDefaults = ref<SitePromptDefaults | null>(null);
-type ServiceModelCatalogState = {
-  endpoint: string;
-  models: string[];
-  loading: boolean;
-  error: string;
-};
-const serviceCatalogs = reactive<Record<string, ServiceModelCatalogState>>({});
+const peakModels = ref<Record<string, string[]>>({});
 let configLoadSeq = 0;
 let promptDefaultsLoadSeq = 0;
 let logsLoadSeq = 0;
@@ -772,30 +584,6 @@ const videoFilters = reactive<{ status: "" | "pending" | "manual_review" | "reje
   page: 1,
   size: 20,
 });
-const modelAssignments = [
-  { key: "assistantModel", serviceKey: "assistantServiceId", label: "拾间 AI", description: "站内问答与校园服务咨询" },
-  { key: "smartPostModel", serviceKey: "smartPostServiceId", label: "智慧发帖", description: "文字与多附件生成可编辑帖子草稿" },
-  { key: "songReviewModel", serviceKey: "songReviewServiceId", label: "药苑之声歌曲审核", description: "语种、曲风、录音版本与选曲规则审核" },
-  { key: "aiReviewModel", serviceKey: "aiReviewServiceId", label: "文字审核", description: "帖子、回复与编辑相似度" },
-  { key: "qqGroupAdReviewModel", serviceKey: "qqGroupAdReviewServiceId", label: "QQ群广告过滤", description: "群消息广告与引流识别" },
-  { key: "imageReviewModel", serviceKey: "imageReviewServiceId", label: "图片审核", description: "论坛图片安全审核" },
-  { key: "videoReviewModel", serviceKey: "videoReviewServiceId", label: "视频审核", description: "关键帧、音轨与上下文审核" },
-] as const;
-const serviceAssignments = [
-  { key: "assistantServiceId", scene: "assistant", label: "拾间 AI" },
-  { key: "learningAssistantServiceId", scene: "learning-assistant", label: "网课解题" },
-  { key: "smartPostServiceId", scene: "smart-post", label: "智慧发帖" },
-  { key: "songReviewServiceId", scene: "song-review", label: "歌曲审核" },
-  { key: "aiReviewServiceId", scene: "text-review", label: "文字审核" },
-  { key: "qqGroupAdReviewServiceId", scene: "qq-group-ad", label: "QQ群广告过滤" },
-  { key: "imageReviewServiceId", scene: "image-review", label: "图片审核" },
-  { key: "videoReviewServiceId", scene: "video-review", label: "视频审核" },
-] as const;
-const serviceProviderOptions = [
-  { value: "deepseek", label: "DeepSeek 兼容接口" },
-  { value: "openai", label: "OpenAI 兼容接口" },
-  { value: "ollama", label: "Ollama" },
-] as const;
 const learningTierAssignments = [
   { key: "low", label: "快速判断", description: "常规题目与快速作答" },
   { key: "high", label: "深入分析", description: "计算题与复杂推导" },
@@ -808,10 +596,6 @@ const reasoningEffortOptions = [
   { value: "xhigh", label: "xhigh（超高）" },
   { value: "max", label: "max（最高）" },
 ] as const;
-const DEFAULT_REMOTE_AI_URL = "https://api.deepseek.com/chat/completions";
-const DEFAULT_OLLAMA_ADDRESS = "http://127.0.0.1:11434";
-const DEFAULT_REMOTE_ASSISTANT_CONTEXT = { maxMessages: 0, maxCharsPerMessage: 0 } as const;
-const DEFAULT_LOCAL_ASSISTANT_CONTEXT = { maxMessages: 2, maxCharsPerMessage: 800 } as const;
 const form = reactive<SiteConfig>({
   siteOrigin: "",
   siteFilingNumber: "",
@@ -936,21 +720,6 @@ const aiEditSimilarityPercent = computed({
     form.aiEditSimilarityThreshold = value / 100;
   },
 });
-const modelCatalogSummary = computed(() => {
-  const loaded = form.aiServices.filter((service) => serviceCatalogState(service.id).models.length).length;
-  const loading = form.aiServices.filter((service) => serviceCatalogState(service.id).loading).length;
-  if (loading) return `正在读取 ${loading} 个服务的模型列表…`;
-  if (loaded) return `已为 ${loaded}/${form.aiServices.length} 个服务读取模型列表；每个场景只显示所选服务的模型。`;
-  return "请在对应服务卡点击“刷新此服务模型”，或刷新全部模型列表；每个场景的模型下拉不会混用其他服务。";
-});
-
-const learningModelOptions = computed(() => modelOptionsForService(form.learningAssistantServiceId, [
-  form.learningAssistantTiers.low.model,
-  form.learningAssistantTiers.high.model,
-  form.learningAssistantTiers.max.model,
-]));
-const learningServiceName = computed(() => serviceForScene(form.learningAssistantServiceId)?.name || "未选择服务");
-
 onMounted(async () => {
   await Promise.all([loadConfig(), loadLogs(), loadPromptDefaults(), loadVideos()]);
 });
@@ -961,11 +730,7 @@ async function loadConfig() {
   configLoadError.value = "";
   try {
     const config = await adminApi.siteConfig({ suppressErrorMessage: true });
-    if (seq === configLoadSeq) {
-      Object.assign(form, config);
-      ensureAiServices();
-      void loadAssignedServiceCatalogs();
-    }
+    if (seq === configLoadSeq) Object.assign(form, config);
   } catch (error) {
     if (seq === configLoadSeq) {
       configLoadError.value = requestMessage(error) || "审核配置加载失败，请稍后重试";
@@ -975,311 +740,23 @@ async function loadConfig() {
   }
 }
 
-function ensureAiServices() {
-  if (!Array.isArray(form.aiServices) || !form.aiServices.length) {
-    form.aiServices.splice(0, form.aiServices.length, {
-      id: "default-main",
-      name: "默认 AI 服务",
-      provider: "deepseek",
-      apiUrl: DEFAULT_REMOTE_AI_URL,
-      apiKey: "",
-      assistantContextMaxMessages: 0,
-      assistantContextMaxCharsPerMessage: 0,
-    });
-  }
-  const seen = new Set<string>();
-  form.aiServices.forEach((service, index) => {
-    const fallbackId = `service-${index + 1}`;
-    let id = String(service.id || fallbackId).trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").slice(0, 48) || fallbackId;
-    while (seen.has(id)) id = `${id.slice(0, 42)}-${index + 1}`;
-    service.id = id;
-    service.name = String(service.name || `AI 服务 ${index + 1}`).trim();
-    service.provider = String(service.provider || "deepseek").trim() || "deepseek";
-    service.apiUrl = String(service.apiUrl || "").trim();
-    service.apiKey = String(service.apiKey || "").trim();
-    const contextDefaults = defaultAssistantContextForService(service);
-    service.assistantContextMaxMessages = normalizeAssistantContextLimit(
-      service.assistantContextMaxMessages,
-      contextDefaults.maxMessages,
-      60,
-    );
-    service.assistantContextMaxCharsPerMessage = normalizeAssistantContextLimit(
-      service.assistantContextMaxCharsPerMessage,
-      contextDefaults.maxCharsPerMessage,
-      4000,
-    );
-    if (!serviceCatalogs[service.id]) {
-      serviceCatalogs[service.id] = { endpoint: "", models: [], loading: false, error: "" };
-    }
-    seen.add(id);
-  });
-  if (!form.aiServiceFallbacks || typeof form.aiServiceFallbacks !== "object") {
-    form.aiServiceFallbacks = {
-      assistant: [],
-      "learning-assistant": [],
-      "smart-post": [],
-      "song-review": [],
-      "text-review": [],
-      "qq-group-ad": [],
-      "image-review": [],
-      "video-review": [],
-    };
-  }
-  for (const item of serviceAssignments) {
-    if (!form.aiServices.some((service) => service.id === form[item.key])) {
-      form[item.key] = form.aiServices[0].id;
-    }
-  }
-  if (!form.aiServices.some((service) => service.id === form.qqGroupAdReviewPeakServiceId)) {
-    form.qqGroupAdReviewPeakServiceId = form.qqGroupAdReviewServiceId || form.aiServices[0].id;
-  }
-  normalizeFallbackServices();
+/** 高峰模型下拉里列出所选服务的模型目录；读不到时仍可手动输入。 */
+async function loadPeakModels() {
+  const service = form.aiServices.find((item) => item.id === form.qqGroupAdReviewPeakServiceId);
+  if (!service?.apiUrl.trim() || peakModels.value[service.id]) return;
+  const [probe] = await adminApi.probeAiServices(
+    [{ id: service.id, provider: service.provider, apiUrl: service.apiUrl, apiKey: service.apiKey }],
+    { timeout: 45_000, suppressErrorMessage: true, preserveResponseCache: true },
+  ).catch(() => []);
+  if (probe?.ok) peakModels.value = { ...peakModels.value, [service.id]: probe.models };
 }
 
-function normalizeFallbackServices() {
-  const available = new Set(form.aiServices.map((service) => service.id));
-  for (const item of serviceAssignments) {
-    const primaryId = String(form[item.key] || "");
-    const selected = Array.isArray(form.aiServiceFallbacks[item.scene])
-      ? form.aiServiceFallbacks[item.scene]
-      : [];
-    const seen = new Set<string>();
-    form.aiServiceFallbacks[item.scene] = selected
-      .map((value) => normalizeFallbackRoute(value))
-      .filter((route) => route.serviceId && route.serviceId !== primaryId && available.has(route.serviceId) && !seen.has(route.serviceId))
-      .filter((route) => {
-        seen.add(route.serviceId);
-        return true;
-      })
-      .slice(0, 8);
-  }
-}
-
-function normalizeFallbackRoute(value: unknown): AiServiceFallbackRoute {
-  if (typeof value === "string") return { serviceId: value.trim(), model: "" };
-  if (!value || typeof value !== "object") return { serviceId: "", model: "" };
-  const route = value as Partial<AiServiceFallbackRoute>;
-  return {
-    serviceId: String(route.serviceId || "").trim(),
-    model: String(route.model || "").trim(),
-  };
-}
-
-function fallbackRoutes(item: typeof serviceAssignments[number]) {
-  return Array.isArray(form.aiServiceFallbacks[item.scene])
-    ? form.aiServiceFallbacks[item.scene]
-    : [];
-}
-
-function fallbackServiceIds(item: typeof serviceAssignments[number]) {
-  return fallbackRoutes(item).map((route) => normalizeFallbackRoute(route).serviceId).filter(Boolean);
-}
-
-function setFallbackServices(item: typeof serviceAssignments[number], serviceIds: unknown) {
-  const nextIds = Array.isArray(serviceIds) ? serviceIds.map((value) => String(value || "").trim()) : [];
-  const existing = new Map(fallbackRoutes(item).map((route) => {
-    const normalized = normalizeFallbackRoute(route);
-    return [normalized.serviceId, normalized] as const;
-  }));
-  const primaryId = String(form[item.key] || "");
-  const next: AiServiceFallbackRoute[] = [];
-  const seen = new Set<string>();
-  for (const serviceId of nextIds) {
-    if (!serviceId || serviceId === primaryId || seen.has(serviceId) || !form.aiServices.some((service) => service.id === serviceId)) continue;
-    seen.add(serviceId);
-    next.push(existing.get(serviceId) || { serviceId, model: "" });
-  }
-  form.aiServiceFallbacks[item.scene] = next.slice(0, 8);
-  void Promise.all(next.map((route) => loadModelsForService(route.serviceId, { silent: true })));
-}
-
-function fallbackServiceOptions(item: typeof serviceAssignments[number]) {
-  const primaryId = String(form[item.key] || "");
-  return form.aiServices.filter((service) => service.id !== primaryId);
-}
-
-function handleServiceProviderChange(service: AiServiceConfig) {
-  const normalizedProvider = service.provider.trim().toLowerCase();
-  const currentUrl = service.apiUrl.trim();
-  if (normalizedProvider === "ollama" && (!currentUrl || currentUrl === DEFAULT_REMOTE_AI_URL)) {
-    service.apiUrl = DEFAULT_OLLAMA_ADDRESS;
-    if (service.assistantContextMaxMessages === 0 && service.assistantContextMaxCharsPerMessage === 0) {
-      service.assistantContextMaxMessages = DEFAULT_LOCAL_ASSISTANT_CONTEXT.maxMessages;
-      service.assistantContextMaxCharsPerMessage = DEFAULT_LOCAL_ASSISTANT_CONTEXT.maxCharsPerMessage;
-    }
-  } else if (normalizedProvider !== "ollama" && currentUrl === DEFAULT_OLLAMA_ADDRESS) {
-    service.apiUrl = DEFAULT_REMOTE_AI_URL;
-    if (
-      service.assistantContextMaxMessages === DEFAULT_LOCAL_ASSISTANT_CONTEXT.maxMessages
-      && service.assistantContextMaxCharsPerMessage === DEFAULT_LOCAL_ASSISTANT_CONTEXT.maxCharsPerMessage
-    ) {
-      service.assistantContextMaxMessages = DEFAULT_REMOTE_ASSISTANT_CONTEXT.maxMessages;
-      service.assistantContextMaxCharsPerMessage = DEFAULT_REMOTE_ASSISTANT_CONTEXT.maxCharsPerMessage;
-    }
-  }
-  invalidateServiceCatalog(service.id);
-  void loadModelsForService(service.id, { silent: true });
-}
-
-function addAiService() {
-  const service: AiServiceConfig = {
-    id: `service-${Date.now()}`,
-    name: `AI 服务 ${form.aiServices.length + 1}`,
-    provider: "deepseek",
-    apiUrl: DEFAULT_REMOTE_AI_URL,
-    apiKey: "",
-    assistantContextMaxMessages: 0,
-    assistantContextMaxCharsPerMessage: 0,
-  };
-  form.aiServices.push(service);
-}
-
-function defaultAssistantContextForService(service: Pick<AiServiceConfig, "provider" | "apiUrl">) {
-  return service.provider.trim().toLowerCase() === "ollama" || /(?:localhost|127\.0\.0\.1|\[::1\]|:11434)(?::\d+)?(?:\/|$)/iu.test(service.apiUrl.trim())
-    ? DEFAULT_LOCAL_ASSISTANT_CONTEXT
-    : DEFAULT_REMOTE_ASSISTANT_CONTEXT;
-}
-
-function normalizeAssistantContextLimit(value: unknown, fallback: number, maximum: number) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return fallback;
-  return Math.max(0, Math.min(maximum, Math.floor(parsed)));
-}
-
-function removeAiService(serviceId: string) {
-  if (form.aiServices.length <= 1) return;
-  const index = form.aiServices.findIndex((service) => service.id === serviceId);
-  if (index < 0) return;
-  const fallbackId = form.aiServices[index === 0 ? 1 : 0].id;
-  form.aiServices.splice(index, 1);
-  delete serviceCatalogs[serviceId];
-  for (const item of serviceAssignments) {
-    if (form[item.key] === serviceId) form[item.key] = fallbackId;
-  }
-  if (form.qqGroupAdReviewPeakServiceId === serviceId) {
-    form.qqGroupAdReviewPeakServiceId = form.qqGroupAdReviewServiceId || fallbackId;
-  }
-  normalizeFallbackServices();
-}
-
-function serviceForScene(serviceId: string) {
-  return form.aiServices.find((service) => service.id === serviceId) || form.aiServices[0] || null;
-}
-
-function serviceCatalogState(serviceId: string): ServiceModelCatalogState {
-  return serviceCatalogs[serviceId] || { endpoint: "", models: [], loading: false, error: "" };
-}
-
-function uniqueModels(models: unknown[]) {
-  return Array.from(new Set(models.map((model) => String(model || "").trim()).filter(Boolean)));
-}
-
-function modelOptionsForService(serviceId: string, configured: unknown[] = []) {
-  return uniqueModels([
-    ...(serviceCatalogState(serviceId).models || []),
-    ...configured,
-  ]);
-}
-
-function modelOptionsForField(fieldKey: string) {
-  const assignment = modelAssignments.find((item) => item.key === fieldKey);
-  if (!assignment) return [];
-  const serviceId = String(form[assignment.serviceKey] || "");
-  return modelOptionsForService(serviceId, [form[fieldKey as keyof SiteConfig]]);
-}
-
-function modelSourceLabel(fieldKey: string) {
-  const assignment = modelAssignments.find((item) => item.key === fieldKey);
-  if (!assignment) return "未选择服务";
-  return serviceForScene(String(form[assignment.serviceKey] || ""))?.name || "未选择服务";
-}
-
-function serviceCatalogStatus(serviceId: string) {
-  const state = serviceCatalogState(serviceId);
-  const service = serviceForScene(serviceId);
-  if (!service?.apiUrl.trim()) return "请先填写 API 地址";
-  if (state.loading) return "正在读取模型列表…";
-  if (state.error) return `读取失败：${state.error}`;
-  if (state.models.length) {
-    const endpoint = state.endpoint ? ` · ${state.endpoint}` : "";
-    return `已读取 ${state.models.length} 个模型${endpoint}`;
-  }
-  return "尚未读取模型列表";
-}
-
-function invalidateServiceCatalog(serviceId: string) {
-  const state = serviceCatalogs[serviceId];
-  if (!state || state.loading) return;
-  state.endpoint = "";
-  state.models = [];
-  state.error = "";
-}
-
-async function loadModelsForService(serviceId: string, options: { silent?: boolean } = {}) {
-  const service = serviceForScene(serviceId);
-  if (!service?.apiUrl.trim()) return false;
-  const state = serviceCatalogs[service.id] || (serviceCatalogs[service.id] = {
-    endpoint: "",
-    models: [],
-    loading: false,
-    error: "",
-  });
-  if (state.loading) return false;
-  state.loading = true;
-  state.error = "";
-  try {
-    const catalog = await adminApi.aiModels({
-      provider: service.provider,
-      apiUrl: service.apiUrl.trim(),
-      apiKey: service.apiKey.trim(),
-    });
-    state.endpoint = catalog.endpoint;
-    state.models = catalog.models;
-    if (!options.silent) ElMessage.success(`${service.name}：已读取 ${catalog.models.length} 个模型`);
-    return true;
-  } catch (error) {
-    state.error = requestMessage(error) || "上游模型列表读取失败";
-    if (!options.silent) ElMessage.error(`${service.name}：${state.error}`);
-    return false;
-  } finally {
-    state.loading = false;
-  }
-}
-
-async function loadAssignedServiceCatalogs() {
-  const serviceIds = Array.from(new Set([
-    ...serviceAssignments.flatMap((item) => [
-      String(form[item.key] || "").trim(),
-      ...(form.aiServiceFallbacks[item.scene] || []).map((route) => normalizeFallbackRoute(route).serviceId),
-    ]),
-    String(form.qqGroupAdReviewPeakServiceId || "").trim(),
+function peakModelOptions() {
+  return Array.from(new Set([
+    ...(peakModels.value[form.qqGroupAdReviewPeakServiceId] || []),
+    form.qqGroupAdReviewPeakModel,
   ].filter(Boolean)));
-  await Promise.all(serviceIds.map((serviceId) => loadModelsForService(serviceId, { silent: true })));
 }
-
-async function loadAllModels() {
-  if (loadingAllModels.value) return;
-  loadingAllModels.value = true;
-  try {
-    const results = await Promise.all(form.aiServices.map((service) => loadModelsForService(service.id, { silent: true })));
-    const successCount = results.filter(Boolean).length;
-    ElMessage.success(`已为 ${successCount} 个服务读取模型列表`);
-  } finally {
-    loadingAllModels.value = false;
-  }
-}
-
-watch(
-  () => [
-    ...serviceAssignments.map((item) => String(form[item.key] || "")),
-    String(form.qqGroupAdReviewPeakServiceId || ""),
-  ],
-  (next, previous) => {
-    if (!previous) return;
-    const changed = next.filter((serviceId, index) => serviceId && serviceId !== previous[index]);
-    void Promise.all(changed.map((serviceId) => loadModelsForService(serviceId, { silent: true })));
-  },
-);
 
 async function loadPromptDefaults() {
   const seq = ++promptDefaultsLoadSeq;
@@ -1302,48 +779,19 @@ async function saveConfig() {
   if (saving.value || configLoadError.value) return;
   saving.value = true;
   try {
-    ensureAiServices();
-    normalizeFallbackServices();
-    const assistantService = serviceForScene(form.assistantServiceId) as AiServiceConfig;
-    const learningAssistantService = serviceForScene(form.learningAssistantServiceId) as AiServiceConfig;
-    const smartPostService = serviceForScene(form.smartPostServiceId) as AiServiceConfig;
-    const textReviewService = serviceForScene(form.aiReviewServiceId) as AiServiceConfig;
-    const qqService = serviceForScene(form.qqGroupAdReviewServiceId) as AiServiceConfig;
-    const imageService = serviceForScene(form.imageReviewServiceId) as AiServiceConfig;
-    const videoService = serviceForScene(form.videoReviewServiceId) as AiServiceConfig;
+    // 服务、线路和各场景的模型由“服务线路”保存，这里不带，免得用这一页加载时的旧值盖掉那边的改动。
     Object.assign(form, await adminApi.updateSiteConfig({
-      assistantModel: form.assistantModel,
       learningAssistantTiers: form.learningAssistantTiers,
-      aiServices: form.aiServices.map((service) => ({ ...service })),
-      aiServiceFallbacks: Object.fromEntries(
-        serviceAssignments.map((item) => [item.scene, [...form.aiServiceFallbacks[item.scene]]]),
-      ) as SiteConfig["aiServiceFallbacks"],
-      assistantServiceId: assistantService.id,
-      learningAssistantServiceId: learningAssistantService.id,
-      smartPostServiceId: smartPostService.id,
-      songReviewServiceId: form.songReviewServiceId,
       songReviewEnabled: form.songReviewEnabled,
-      songReviewModel: form.songReviewModel,
       songReviewFallbackModels: form.songReviewFallbackModels,
       songReviewRules: form.songReviewRules,
       smartPostEnabled: form.smartPostEnabled,
-      smartPostModel: form.smartPostModel,
       smartPostFallbackModels: form.smartPostFallbackModels,
       smartPostTokensPerQuota: form.smartPostTokensPerQuota,
-      aiReviewServiceId: textReviewService.id,
       aiReviewEnabled: form.aiReviewEnabled,
-      aiReviewProvider: textReviewService.provider,
-      aiReviewApiUrl: textReviewService.apiUrl,
-      aiReviewModel: form.aiReviewModel,
       aiReviewFallbackModels: form.aiReviewFallbackModels,
-      aiReviewApiKey: textReviewService.apiKey,
-      qqGroupAdReviewServiceId: qqService.id,
       qqGroupAdReviewEnabled: form.qqGroupAdReviewEnabled,
-      qqGroupAdReviewProvider: qqService.provider,
-      qqGroupAdReviewApiUrl: qqService.apiUrl,
-      qqGroupAdReviewModel: form.qqGroupAdReviewModel,
       qqGroupAdReviewFallbackModels: form.qqGroupAdReviewFallbackModels,
-      qqGroupAdReviewApiKey: qqService.apiKey,
       qqGroupAdReviewPeakEnabled: form.qqGroupAdReviewPeakEnabled,
       qqGroupAdReviewPeakStart: form.qqGroupAdReviewPeakStart,
       qqGroupAdReviewPeakEnd: form.qqGroupAdReviewPeakEnd,
@@ -1351,24 +799,14 @@ async function saveConfig() {
       qqGroupAdReviewPeakModel: form.qqGroupAdReviewPeakModel,
       qqGroupAdReviewSystemPrompt: form.qqGroupAdReviewSystemPrompt,
       qqGroupAdReviewUserPrompt: form.qqGroupAdReviewUserPrompt,
-      imageReviewServiceId: imageService.id,
-      imageReviewProvider: imageService.provider,
       imageReviewEnabled: form.imageReviewEnabled,
-      imageReviewApiUrl: imageService.apiUrl,
-      imageReviewModel: form.imageReviewModel,
       imageReviewFallbackModels: form.imageReviewFallbackModels,
-      imageReviewApiKey: imageService.apiKey,
       imageReviewSystemPrompt: form.imageReviewSystemPrompt,
       imageReviewUserPrompt: form.imageReviewUserPrompt,
       imageReviewConcurrency: form.imageReviewConcurrency,
       imageReviewRequestGroupSize: form.imageReviewRequestGroupSize,
-      videoReviewServiceId: videoService.id,
-      videoReviewProvider: videoService.provider,
       videoReviewEnabled: form.videoReviewEnabled,
-      videoReviewApiUrl: videoService.apiUrl,
-      videoReviewModel: form.videoReviewModel,
       videoReviewFallbackModels: form.videoReviewFallbackModels,
-      videoReviewApiKey: videoService.apiKey,
       videoReviewSystemPrompt: form.videoReviewSystemPrompt,
       videoReviewUserPrompt: form.videoReviewUserPrompt,
       videoReviewConcurrency: form.videoReviewConcurrency,
@@ -1384,8 +822,7 @@ async function saveConfig() {
       aiEditSimilaritySystemPrompt: form.aiEditSimilaritySystemPrompt,
       aiEditSimilarityUserPrompt: form.aiEditSimilarityUserPrompt,
     }));
-    ensureAiServices();
-    ElMessage.success("AI 服务、模型与审核配置已保存");
+    ElMessage.success("功能与审核配置已保存");
   } finally {
     saving.value = false;
   }
@@ -1619,155 +1056,15 @@ function requestMessage(error: unknown) {
   gap: 14px;
 }
 
-.provider-card {
-  border-color: var(--el-color-primary-light-7);
-  background: var(--el-bg-color);
+.routing-hint {
+  margin: 0;
+  color: var(--cpu-text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
-.provider-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.provider-form {
-  background: var(--el-fill-color-extra-light);
-  border-color: var(--el-border-color-lighter);
-}
-
-.service-pool,
-.service-routing {
-  display: grid;
-  gap: 12px;
-  padding: 16px;
-  border-radius: 14px;
-  background: var(--cpu-surface);
-  border: 1px solid var(--cpu-border-soft);
-}
-
-.service-pool-head,
-.service-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.service-card-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.service-card {
-  display: grid;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid var(--cpu-border-soft);
-  border-radius: 12px;
-  background: var(--cpu-card);
-}
-
-.service-index {
-  color: var(--cpu-text);
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.service-grid,
-.routing-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.routing-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.route-card {
-  display: grid;
-  gap: 12px;
-  padding: 12px;
-  border: 1px solid var(--cpu-border-soft);
-  border-radius: 12px;
-  background: var(--el-fill-color-extra-light);
-}
-
-.route-fallback-note {
-  min-height: 32px;
-}
-
-.fallback-model-list {
-  display: grid;
-  gap: 8px;
-  padding: 8px 0 0;
-  border-top: 1px dashed var(--el-border-color-lighter);
-}
-
-.fallback-model-row {
-  display: grid;
-  grid-template-columns: minmax(90px, 0.7fr) minmax(0, 1.3fr);
-  align-items: center;
-  gap: 8px;
-}
-
-.fallback-model-service {
-  overflow: hidden;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.fallback-model-select {
-  min-width: 0;
-}
-
-.model-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.model-field {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  padding: 14px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 12px;
-  background: var(--el-fill-color-blank);
-}
-
-.model-field > span {
-  color: var(--el-text-color-primary);
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.model-field > small {
-  min-height: 34px;
-  color: var(--el-text-color-secondary);
-  line-height: 1.5;
-}
-
-.model-field > small.model-source,
 .learning-tier-card .model-source {
-  min-height: 0;
-  color: var(--el-color-primary);
-}
-
-.learning-tier-panel {
-  display: grid;
-  gap: 12px;
-  padding-top: 4px;
-}
-
-.learning-tier-head {
-  align-items: end;
+  color: var(--cpu-text-muted);
 }
 
 .learning-tier-grid {
@@ -1884,11 +1181,6 @@ function requestMessage(error: unknown) {
   color: var(--cpu-text-muted);
   font-size: 12px;
   line-height: 1.6;
-}
-
-.service-catalog-status {
-  display: block;
-  color: var(--el-color-primary);
 }
 
 .prompt-card {
@@ -2037,22 +1329,8 @@ function requestMessage(error: unknown) {
     padding: 14px;
   }
 
-  .service-grid,
-  .routing-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .model-grid {
-    grid-template-columns: 1fr;
-  }
-
   .learning-tier-grid {
     grid-template-columns: 1fr;
-  }
-
-  .provider-actions,
-  .provider-actions :deep(.el-button) {
-    width: 100%;
   }
 
   .filters {

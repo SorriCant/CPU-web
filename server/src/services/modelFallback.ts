@@ -51,9 +51,14 @@ export function shouldFallbackToNextModel(status: number, responseText: string) 
  * such as Ollama's `invalid image input` describes this request, not a dead
  * provider; sending the same malformed payload to another service only hides
  * the real cause and produces another failure.
+ *
+ * A rejected key (401) or an unpaid account (402, or a balance message under
+ * another status) is the provider's state as well: every request to it fails
+ * the same way until someone fixes the account, so the next provider gets it.
  */
 export function shouldFallbackToNextProvider(status: number, responseText: string) {
+  if (status === 401 || status === 402) return true;
   if (status === 408 || status === 409 || status === 425 || status === 429 || status === 529 || status >= 500) return true;
   const text = String(responseText || "").toLowerCase();
-  return /(?:temporarily unavailable|server is overloaded|capacity|rate limit|quota exceeded|try again later)/i.test(text);
+  return /(?:temporarily unavailable|server is overloaded|capacity|rate limit|quota exceeded|try again later|insufficient[ _](?:balance|quota|credit)|余额不足|额度不足|账户欠费)/i.test(text);
 }

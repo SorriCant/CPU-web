@@ -3,16 +3,18 @@
     <header class="pane-heading">
       <div>
         <h2>AI 管理</h2>
-        <p>在一个入口里管理模型与审核、统一日志和用户额度。</p>
+        <p>在一个入口里管理服务线路、功能与审核、统一日志和用户额度。</p>
       </div>
       <el-radio-group v-model="section" class="section-switch">
-        <el-radio-button value="configuration">配置与审核</el-radio-button>
+        <el-radio-button value="routing">服务线路</el-radio-button>
+        <el-radio-button value="configuration">功能与审核</el-radio-button>
         <el-radio-button value="usage">使用日志</el-radio-button>
         <el-radio-button value="quota">额度与策略</el-radio-button>
       </el-radio-group>
     </header>
 
-    <AiReviewPane v-if="section === 'configuration'" />
+    <AiRoutingPane v-if="section === 'routing'" />
+    <AiReviewPane v-else-if="section === 'configuration'" />
     <AiUsagePane v-else-if="section === 'usage'" />
     <AiQuotaPane v-else />
   </div>
@@ -21,11 +23,12 @@
 <script setup lang="ts">
 import { defineAsyncComponent, ref } from "vue";
 
+const AiRoutingPane = defineAsyncComponent(() => import("./AiRoutingPane.vue"));
 const AiReviewPane = defineAsyncComponent(() => import("./AiReviewPane.vue"));
 const AiUsagePane = defineAsyncComponent(() => import("./AiUsagePane.vue"));
 const AiQuotaPane = defineAsyncComponent(() => import("./AiQuotaPane.vue"));
 
-const section = ref<"configuration" | "usage" | "quota">("configuration");
+const section = ref<"routing" | "configuration" | "usage" | "quota">("routing");
 </script>
 
 <style scoped>
@@ -67,7 +70,7 @@ const section = ref<"configuration" | "usage" | "quota">("configuration");
 
   .section-switch {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .section-switch :deep(.el-radio-button),

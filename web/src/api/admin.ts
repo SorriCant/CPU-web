@@ -10,6 +10,56 @@ export type AiServiceConfig = {
   apiKey: string;
   assistantContextMaxMessages: number;
   assistantContextMaxCharsPerMessage: number;
+  /** 已手动停用：所有场景跳过它，改用线路里的下一个服务。 */
+  disabled?: boolean;
+};
+/** 线路上的一环；回退环的模型留空表示沿用主模型名。 */
+export type AiRouteEntry = { serviceId: string; model: string };
+export type AiLearningTierModels = Record<"low" | "high" | "max", string>;
+export type AiRoutingScene = {
+  scene: AiServiceScene;
+  label: string;
+  featureEnabled: boolean;
+  chain: AiRouteEntry[];
+  tierModels?: AiLearningTierModels;
+  /** 主服务上的备选模型（逗号分隔），只读。 */
+  fallbackModels: string;
+};
+export type AiServiceTraffic = {
+  serviceId: string;
+  success: number;
+  error: number;
+  lastSuccessAt: string | null;
+  lastErrorAt: string | null;
+  lastError: string;
+  lastErrorModel: string;
+  shared: boolean;
+};
+export type AiRoutingOverview = {
+  services: AiServiceConfig[];
+  scenes: AiRoutingScene[];
+  traffic: { windowMinutes: number; services: AiServiceTraffic[] };
+};
+export type AiRoutingUpdate = {
+  services: AiServiceConfig[];
+  scenes: Record<string, { chain: AiRouteEntry[]; tierModels?: AiLearningTierModels }>;
+};
+export type AiServiceProbe = {
+  serviceId: string;
+  ok: boolean;
+  latencyMs: number;
+  checkedAt: string;
+  endpoint: string;
+  models: string[];
+  error: string;
+};
+export type AiRouteTest = {
+  key: string;
+  ok: boolean;
+  status: number;
+  latencyMs: number;
+  checkedAt: string;
+  message: string;
 };
 
 export type AiServiceScene = "assistant" | "learning-assistant" | "smart-post" | "song-review" | "text-review" | "qq-group-ad" | "image-review" | "video-review";
@@ -1332,6 +1382,14 @@ export const adminApi = {
   siteConfig: (options?: RequestOptions) => request.get<SiteConfig>("/admin/site-config", undefined, options),
   aiModels: (payload?: { provider?: string; apiUrl?: string; apiKey?: string }) =>
     request.post<AiModelCatalog>("/admin/ai-models", payload ?? {}),
+  aiRouting: (options?: RequestOptions) => request.get<AiRoutingOverview>("/admin/ai-routing", undefined, options),
+  saveAiRouting: (payload: AiRoutingUpdate) => request.put<AiRoutingOverview>("/admin/ai-routing", payload),
+  setAiServiceEnabled: (serviceId: string, enabled: boolean) =>
+    request.post<AiRoutingOverview>(`/admin/ai-routing/services/${encodeURIComponent(serviceId)}/enabled`, { enabled }),
+  probeAiServices: (services: Array<Pick<AiServiceConfig, "id" | "provider" | "apiUrl" | "apiKey">>, options?: RequestOptions) =>
+    request.post<AiServiceProbe[]>("/admin/ai-routing/probe", { services }, options),
+  testAiRoutes: (routes: Array<{ key: string; provider: string; apiUrl: string; apiKey: string; model: string }>, options?: RequestOptions) =>
+    request.post<AiRouteTest[]>("/admin/ai-routing/test", { routes }, options),
   topNavigation: (options?: RequestOptions) => request.get<TopNavigationAdminPayload>("/admin/top-navigation", undefined, options),
   updateTopNavigation: (items: TopNavigationItem[]) => request.patch<TopNavigationAdminPayload>("/admin/top-navigation", { items }),
   resetTopNavigation: () => request.post<TopNavigationAdminPayload>("/admin/top-navigation/reset", {}),

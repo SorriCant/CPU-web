@@ -630,7 +630,7 @@ export function resolveQqGroupAdPeakProvider(
 ) {
   const requestedId = String(config.qqGroupAdReviewPeakServiceId || "").trim();
   const selected = config.aiServices.find((service) => service.id === requestedId);
-  return selected
+  return selected && !selected.disabled
     ? { serviceId: selected.id, ...selected }
     : fallback;
 }

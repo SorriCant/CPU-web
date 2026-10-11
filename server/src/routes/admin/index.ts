@@ -28,6 +28,8 @@ import {
   getFeatures,
   isGlobalPinnedTopic,
   getSiteConfig,
+  getStoredSiteConfig,
+  setAiServiceDisabled,
   getSitePromptDefaults,
   getTopNavigation,
   getDefaultTopNavigation,
@@ -143,6 +145,7 @@ import { getQueryAgentPoolSnapshot } from "../../services/jwxtAgentRemote";
 import { getSsoLoginPoolSnapshot } from "../../services/ssoLoginPool";
 import { resetCampusAssistantDailyUsage } from "../../services/campusAssistantQuota";
 import { fetchAiModelCatalog } from "../../services/aiModelCatalog";
+import { getAiRoutingState, loadAiServiceTraffic, probeAiService, saveAiRouting, testAiRoute } from "../../services/aiRouting";
 import { forumAdsAdminRouter } from "./forumAds";
 import { vipGiftCodesAdminRouter } from "./vipGiftCodes";
 import { wechatAdminRouter } from "./wechat";
@@ -2182,7 +2185,7 @@ adminRouter.get("/overview", modOrAbove, async (_req, res, next) => {
 // ============ 站点功能开关 ============
 
 adminRouter.get("/site-config", adminOnly, (_req, res) => {
-  ok(res, getSiteConfig());
+  ok(res, getStoredSiteConfig());
 });
 
 // ============ 课表校历 / 调休 ============
@@ -2262,6 +2265,103 @@ adminRouter.post("/ai-models", adminOnly, validate(aiModelCatalogSchema), async 
     next(Errors.badRequest(`上游模型列表读取失败：${message}`));
   }
 });
+
+// ============ AI 线路 ============
+
+const aiRoutingServiceSchema = z.object({
+  id: z.string().trim().regex(/^[a-z0-9][a-z0-9_-]{0,47}$/i),
+  name: z.string().trim().min(1).max(80),
+  provider: z.string().trim().min(1).max(40),
+  apiUrl: z.string().trim().max(240),
+  apiKey: z.string().trim().max(240),
+  assistantContextMaxMessages: z.number().int().min(0).max(60).optional(),
+  assistantContextMaxCharsPerMessage: z.number().int().min(0).max(4000).optional(),
+  disabled: z.boolean().optional(),
+});
+
+const aiRoutingEntrySchema = z.object({
+  serviceId: z.string().trim().min(1).max(48),
+  model: z.string().trim().max(200),
+});
+
+const aiRoutingUpdateSchema = z.object({
+  services: z.array(aiRoutingServiceSchema).min(1).max(20),
+  scenes: z.record(z.object({
+    chain: z.array(aiRoutingEntrySchema).min(1).max(9),
+    tierModels: z.object({
+      low: z.string().trim().min(1).max(200),
+      high: z.string().trim().min(1).max(200),
+      max: z.string().trim().min(1).max(200),
+    }).optional(),
+  })),
+});
+
+const aiRoutingUpstreamSchema = {
+  provider: z.string().trim().max(40),
+  apiUrl: z.string().trim().max(240),
+  apiKey: z.string().trim().max(240),
+};
+
+async function aiRoutingOverview() {
+  const state = getAiRoutingState();
+  return { ...state, traffic: await loadAiServiceTraffic(state.services) };
+}
+
+adminRouter.get("/ai-routing", adminOnly, async (_req, res, next) => {
+  try { ok(res, await aiRoutingOverview()); } catch (error) { next(error); }
+});
+
+adminRouter.put("/ai-routing", adminOnly, validate(aiRoutingUpdateSchema), async (req, res, next) => {
+  try {
+    await saveAiRouting(req.body);
+    await invalidateSiteSettingCaches();
+    ok(res, await aiRoutingOverview());
+  } catch (error) {
+    next(Errors.badRequest(error instanceof Error ? error.message : "线路保存失败"));
+  }
+});
+
+/// 停用和恢复单独走一个接口，立即生效，不带上页面里其他还没保存的改动。
+adminRouter.post(
+  "/ai-routing/services/:id/enabled",
+  adminOnly,
+  validate(z.object({ enabled: z.boolean() })),
+  async (req, res, next) => {
+    try {
+      await setAiServiceDisabled(String(req.params.id || ""), !req.body.enabled);
+      await invalidateSiteSettingCaches();
+      ok(res, await aiRoutingOverview());
+    } catch (error) {
+      next(Errors.badRequest(error instanceof Error ? error.message : "操作失败"));
+    }
+  },
+);
+
+adminRouter.post(
+  "/ai-routing/probe",
+  adminOnly,
+  validate(z.object({
+    services: z.array(z.object({ id: z.string().trim().min(1).max(48), ...aiRoutingUpstreamSchema })).max(20),
+  })),
+  async (req, res, next) => {
+    try { ok(res, await Promise.all(req.body.services.map(probeAiService))); } catch (error) { next(error); }
+  },
+);
+
+adminRouter.post(
+  "/ai-routing/test",
+  adminOnly,
+  validate(z.object({
+    routes: z.array(z.object({
+      key: z.string().trim().min(1).max(300),
+      model: z.string().trim().max(200),
+      ...aiRoutingUpstreamSchema,
+    })).max(24),
+  })),
+  async (req, res, next) => {
+    try { ok(res, await Promise.all(req.body.routes.map(testAiRoute))); } catch (error) { next(error); }
+  },
+);
 
 const topNavigationItemSchema = z.object({
   id: z.string().trim().min(1).max(48).regex(/^[a-z0-9][a-z0-9_-]*$/, "标识仅支持小写字母、数字、横线和下划线"),
@@ -2690,6 +2790,7 @@ const siteConfigPatchSchema = z.object({
     apiKey: z.string().trim().max(240),
     assistantContextMaxMessages: z.number().int().min(0).max(60).optional(),
     assistantContextMaxCharsPerMessage: z.number().int().min(0).max(4000).optional(),
+    disabled: z.boolean().optional(),
   })).max(20).optional(),
   aiServiceFallbacks: z.record(z.array(z.union([
     z.string().trim().max(48),
@@ -2906,7 +3007,7 @@ adminRouter.patch("/site-config", adminOnly, validate(siteConfigPatchSchema), as
     if (req.body.siteFilingNumber !== undefined) {
       await setSiteFilingNumber(req.body.siteFilingNumber ?? "");
     }
-    const config = getSiteConfig();
+    const config = getStoredSiteConfig();
     await invalidateSiteSettingCaches();
     ok(res, config);
   } catch (e: any) {
