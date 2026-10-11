@@ -42,6 +42,7 @@ export function getExams(token: string, args?: Parameters<typeof local.getExams>
 export function getCalendar(token: string, args?: Parameters<typeof local.getCalendar>[1]) { return queryImpl().getCalendar(token, args); }
 export function getProgress(token: string) { return queryImpl().getProgress(token); }
 export function getPyfa(token: string) { return queryImpl().getPyfa(token); }
+export function getRecords(token: string, args: Parameters<typeof local.getRecords>[1]) { return queryImpl().getRecords(token, args); }
 export function getIApps(token: string) { return queryImpl().getIApps(token); }
 export function getPortalNotices(token: string, args?: Parameters<typeof local.getPortalNotices>[1]) {
   return queryImpl().getPortalNotices(token, args);

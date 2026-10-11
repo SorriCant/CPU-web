@@ -39,6 +39,7 @@ import {
   isRecognizableUndergraduateSchedule,
 } from "../services/academicIdentityDetection";
 import { I_SERVICE_ICON_PATH_PATTERN } from "../services/jwxtClient";
+import { jwxtRecordsArgsSchema, shanghaiToday } from "../services/jwxtRecords";
 import {
   beginLogin,
   submitLogin,
@@ -50,6 +51,7 @@ import {
   getExams,
   getProgress,
   getPyfa,
+  getRecords,
   getIApps,
   getIAppIcon,
   getGraduateSchedule,
@@ -69,6 +71,8 @@ const JWXT_EXAMS_CACHE_TTL_MS = 30 * 60_000;
 const JWXT_PROGRESS_CACHE_TTL_MS = 30 * 60_000;
 const JWXT_PYFA_CACHE_TTL_MS = 6 * 60 * 60_000;
 const JWXT_IAPPS_CACHE_TTL_MS = 60 * 60_000;
+const JWXT_RECORDS_CACHE_TTL_MS = 30 * 60_000;
+const JWXT_FREE_ROOMS_CACHE_TTL_MS = 5 * 60_000;
 const JWXT_IAPP_ICON_CACHE_TTL_MS = 7 * 24 * 60 * 60_000;
 const JWXT_IDENTITY_CACHE_REVISION = "probe-v4";
 const JWXT_SOURCE_CACHE_REVISION = "source-v8";
@@ -868,6 +872,66 @@ jwxtRouter.get("/pyfa", async (req, res, next) => {
     );
     res.setHeader("Cache-Control", "private, max-age=21600, stale-while-revalidate=604800");
     ok(res, { parsed, source: parsed.source });
+  } catch (e) { next(e); }
+});
+
+function queryText(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+/** 课表、成绩之外的教务数据：等级考试、选课、教材、毕业审核、学籍、空教室、全校课表检索等。 */
+jwxtRouter.get("/records", securityRateLimit("jwxt-records", 90, 60_000), async (req, res, next) => {
+  try {
+    const t = getToken(req);
+    if (!t) throw Errors.unauthorized("请先登录教务系统");
+    const parsedArgs = jwxtRecordsArgsSchema.safeParse({
+      kind: queryText(req.query.kind),
+      semester: queryText(req.query.semester),
+      date: queryText(req.query.date),
+      scope: queryText(req.query.scope),
+      keyword: queryText(req.query.keyword),
+    });
+    if (!parsedArgs.success || parsedArgs.data.kind === "transcript") throw Errors.badRequest("不支持的教务数据类型");
+    const args = parsedArgs.data.kind === "free-rooms"
+      ? { ...parsedArgs.data, date: parsedArgs.data.date || shanghaiToday() }
+      : parsedArgs.data;
+    const refresh = req.query.refresh === "1" || req.query.refresh === "true";
+    const parsed = await withCache(
+      "jwxt-records",
+      [
+        JWXT_SOURCE_CACHE_REVISION,
+        jwxtTokenCacheId(t),
+        args.kind,
+        args.semester || "_",
+        args.date || "_",
+        args.scope || "_",
+        args.keyword || "_",
+      ],
+      args.kind === "free-rooms" ? JWXT_FREE_ROOMS_CACHE_TTL_MS : JWXT_RECORDS_CACHE_TTL_MS,
+      async () => getRecords(t, args),
+      { refresh },
+    );
+    res.setHeader("Cache-Control", "private, no-store");
+    ok(res, { parsed, source: parsed.source });
+  } catch (e) { next(e); }
+});
+
+/** 学校教务导出的成绩单 PDF；每次现取，不进缓存。 */
+jwxtRouter.get("/transcript.pdf", securityRateLimit("jwxt-transcript", 6, 60_000), async (req, res, next) => {
+  try {
+    const t = getToken(req);
+    if (!t) throw Errors.unauthorized("请先登录教务系统");
+    const result = await getRecords(t, { kind: "transcript" });
+    if (result.kind !== "transcript") throw Errors.server("成绩单导出失败");
+    const body = Buffer.from(result.file.dataBase64, "base64");
+    if (body.length !== result.file.byteLength || body.subarray(0, 5).toString("latin1") !== "%PDF-") {
+      throw Errors.badGateway("成绩单传输不完整，请稍后重试");
+    }
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", 'attachment; filename="transcript.pdf"');
+    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.send(body);
   } catch (e) { next(e); }
 });
 

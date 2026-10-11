@@ -7,6 +7,7 @@ import { queryDormElectricFromCampus } from "./dormElectricCampus";
 import { scheduleAgentSelfUpdate } from "./agentSelfUpdate";
 import type { JwxtAgentAction } from "./jwxtAgentProtocol";
 import { I_SERVICE_ICON_PATH_PATTERN } from "./jwxtClient";
+import { jwxtRecordsArgsSchema } from "./jwxtRecords";
 
 const emptySchema = z.object({}).strict();
 const loginSchema = z.object({
@@ -85,6 +86,10 @@ export async function dispatchJwxtAgentAction(action: JwxtAgentAction, payload: 
       return jwxt.getProgress(tokenSchema.parse(payload).token);
     case "jwxt.pyfa":
       return jwxt.getPyfa(tokenSchema.parse(payload).token);
+    case "jwxt.records": {
+      const { token, ...args } = tokenSchema.merge(jwxtRecordsArgsSchema).strict().parse(payload);
+      return jwxt.getRecords(token, args);
+    }
     case "jwxt.iapps":
       return jwxt.getIApps(tokenSchema.parse(payload).token);
     case "jwxt.portal-notices": {

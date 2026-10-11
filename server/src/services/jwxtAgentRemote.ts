@@ -146,6 +146,10 @@ export function getPyfa(token: string): ReturnType<typeof local.getPyfa> {
   return requestWithToken(token, "jwxt.pyfa", (innerToken) => ({ token: innerToken })) as ReturnType<typeof local.getPyfa>;
 }
 
+export function getRecords(token: string, args: Parameters<typeof local.getRecords>[1]): ReturnType<typeof local.getRecords> {
+  return requestWithToken(token, "jwxt.records", (innerToken) => ({ token: innerToken, ...args })) as ReturnType<typeof local.getRecords>;
+}
+
 export function getPortalNotices(token: string, args?: Parameters<typeof local.getPortalNotices>[1]): ReturnType<typeof local.getPortalNotices> {
   return requestWithToken(token, "jwxt.portal-notices", (innerToken) => ({ token: innerToken, ...(args ?? {}) })) as ReturnType<typeof local.getPortalNotices>;
 }

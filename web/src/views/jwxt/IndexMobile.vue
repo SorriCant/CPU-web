@@ -82,6 +82,7 @@
               <GradesPane v-if="item.name === 'grades'" :data="grades" :loading="tabLoading && tab === 'grades'" />
               <ProgressPane v-else-if="item.name === 'progress'" :data="progress" :loading="tabLoading && tab === 'progress'" />
               <PyfaPane v-else-if="item.name === 'pyfa'" :data="pyfa" :loading="tabLoading && tab === 'pyfa'" />
+              <RecordsPane v-else-if="item.name === 'more'" :active="tab === 'more'" />
             </template>
           </div>
         </template>
@@ -228,6 +229,7 @@ import {
   CircleCloseFilled,
   Clock,
   DataAnalysis,
+  Grid,
   InfoFilled,
   Lock,
   Reading,
@@ -242,6 +244,7 @@ import { useInjectedJwxtPage, type DataTab, type JwxtTab } from "./jwxtPage";
 const GradesPane = defineAsyncComponent(() => import("@/components/jwxt/GradesPane.vue"));
 const ProgressPane = defineAsyncComponent(() => import("@/components/jwxt/ProgressPane.vue"));
 const PyfaPane = defineAsyncComponent(() => import("@/components/jwxt/PyfaPane.vue"));
+const RecordsPane = defineAsyncComponent(() => import("@/components/jwxt/RecordsPane.vue"));
 
 const {
   jwxt,
@@ -260,6 +263,7 @@ const {
   forgetBusy,
   reauthorizeBusy,
   availableDataTabs,
+  showMoreTab,
   academicDataUnavailable,
   showDataShell,
   usingSavedCredentialRecovery,
@@ -279,15 +283,20 @@ const {
   useManualCredentials,
 } = useInjectedJwxtPage();
 
-// 移动端课表在独立课表页，这里只提供成绩、学业与培养方案。
-const tabMeta: Record<Exclude<DataTab, "schedule">, { label: string; icon: unknown }> = {
+// 移动端课表在独立课表页，这里提供成绩、学业、培养方案，以及“更多”里的其余教务数据。
+type MobileTab = Exclude<DataTab, "schedule"> | "more";
+const tabMeta: Record<MobileTab, { label: string; icon: unknown }> = {
   grades: { label: "成绩", icon: DataAnalysis },
   progress: { label: "学业", icon: School },
   pyfa: { label: "培养", icon: Reading },
+  more: { label: "更多", icon: Grid },
 };
-const visibleTabs = computed(() => availableDataTabs.value
-  .filter((name): name is Exclude<DataTab, "schedule"> => name !== "schedule")
-  .map((name) => ({ name, ...tabMeta[name] })));
+const visibleTabs = computed(() => {
+  const names: MobileTab[] = availableDataTabs.value
+    .filter((name): name is Exclude<DataTab, "schedule"> => name !== "schedule");
+  if (showMoreTab.value) names.push("more");
+  return names.map((name) => ({ name, ...tabMeta[name] }));
+});
 
 const sessionSheetOpen = ref(false);
 // 打开过的标签保持挂载，切换回来时保留筛选和滚动位置，与原先 el-tabs lazy 的行为一致。

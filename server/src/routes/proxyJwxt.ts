@@ -18,6 +18,7 @@ import {
   getCalendar,
   getProgress,
   getPyfa,
+  getRecords,
   getIApps,
   getPortalNotices,
   getIAppIcon,
@@ -27,6 +28,7 @@ import {
 import { crawlSchoolFeedSource, fetchSchoolFeedDetails, SCHOOL_FEED_DETAIL_BATCH } from "../services/schoolCrawlerCore";
 import { PORTAL_NOTICE_MAX_PAGE_SIZE } from "../services/portalNotices";
 import { I_SERVICE_ICON_PATH_PATTERN } from "../services/jwxtClient";
+import { jwxtRecordsArgsSchema } from "../services/jwxtRecords";
 
 export const proxyJwxtRouter = Router();
 
@@ -182,6 +184,14 @@ proxyJwxtRouter.post("/v1/progress", validate(tokenSchema), async (req, res, nex
 proxyJwxtRouter.post("/v1/pyfa", validate(tokenSchema), async (req, res, next) => {
   try {
     const parsed = await getPyfa(req.body.token);
+    ok(res, { parsed, source: parsed.source });
+  } catch (e) { next(e); }
+});
+
+proxyJwxtRouter.post("/v1/records", validate(tokenSchema.merge(jwxtRecordsArgsSchema)), async (req, res, next) => {
+  try {
+    const { token, ...args } = req.body;
+    const parsed = await getRecords(token, args);
     ok(res, { parsed, source: parsed.source });
   } catch (e) { next(e); }
 });

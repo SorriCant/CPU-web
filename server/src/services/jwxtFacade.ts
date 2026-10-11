@@ -9,6 +9,7 @@ import {
   sessionStats as clientSessionStats,
   jwxtFetchHtml,
   jwxtFetchModernHtml,
+  jwxtDownloadModernPdf,
   jwxtPostForm,
   fetchIServiceApps,
   fetchIServiceIcon,
@@ -33,6 +34,7 @@ import {
 import { isRecognizableUndergraduateSchedule } from "./academicIdentityDetection";
 import { Errors } from "../utils/response";
 import { loadModernScheduleCalendar } from "./scheduleCalendarSource";
+import { loadJwxtRecords, type JwxtRecordsArgs } from "./jwxtRecords";
 
 export type JwxtDataSource = "modern" | "legacy";
 
@@ -354,6 +356,16 @@ export async function getPyfa(token: string) {
     })),
     async () => parsePyfa(await jwxtFetchHtml(token, "/zgykdx/pyfa/pyfa_query?Ves632DSdyV=NEW_XSD_PYGL")),
   );
+}
+
+/** 课表、成绩、考试之外的教务数据，只来自新版教务。 */
+export async function getRecords(token: string, args: JwxtRecordsArgs) {
+  const result = await loadJwxtRecords({
+    get: (path) => jwxtFetchModernHtml(token, path),
+    post: (path, form) => jwxtFetchModernHtml(token, path, { form }),
+    pdf: (path, form) => jwxtDownloadModernPdf(token, path, form),
+  }, args);
+  return { ...result, source: "modern" as const };
 }
 
 export async function getIApps(token: string) {

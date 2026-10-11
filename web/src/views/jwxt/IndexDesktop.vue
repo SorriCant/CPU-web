@@ -204,6 +204,10 @@
           <template #label><AppIcon name="course" /> 培养方案</template>
           <PyfaPane :data="pyfa" :loading="tabLoading" />
         </el-tab-pane>
+        <el-tab-pane v-if="showMoreTab" name="more" lazy>
+          <template #label><AppIcon name="board" /> 更多</template>
+          <RecordsPane :active="tab === 'more'" />
+        </el-tab-pane>
         <el-tab-pane name="debug" v-if="isDev">
           <template #label><AppIcon name="tools" /> 调试</template>
           <div class="debug-pane">
@@ -240,6 +244,7 @@ const GradesPane = defineAsyncComponent(() => import("@/components/jwxt/GradesPa
 // const MidtermGradesPane = defineAsyncComponent(() => import("@/components/jwxt/MidtermGradesPane.vue"));
 const ProgressPane = defineAsyncComponent(() => import("@/components/jwxt/ProgressPane.vue"));
 const PyfaPane = defineAsyncComponent(() => import("@/components/jwxt/PyfaPane.vue"));
+const RecordsPane = defineAsyncComponent(() => import("@/components/jwxt/RecordsPane.vue"));
 
 const {
   jwxt,
@@ -265,6 +270,7 @@ const {
   snapping,
   snapResult,
   isDev,
+  showMoreTab,
   hasJwxtTabs,
   academicDataUnavailable,
   showDataShell,

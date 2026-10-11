@@ -1095,12 +1095,37 @@ async function establishModernJwxtSession(jar: CookieJar) {
     && !isModernJwxtLoginPage(probeHtml);
 }
 
-async function fetchModernPage(session: ActiveSession, target: URL) {
-  const result = await followRedirects(session.jar, target.toString());
+async function fetchModernPage(session: ActiveSession, target: URL, init: RequestInit = {}) {
+  const result = await followRedirects(session.jar, target.toString(), init);
   return {
     result,
     finalHost: new URL(result.finalUrl).hostname.toLowerCase(),
     html: await result.res.text(),
+  };
+}
+
+function resolveModernJwxtTarget(path: string) {
+  const target = new URL(path, MODERN_JWXT_ORIGIN);
+  if (
+    target.protocol !== "https:"
+    || target.hostname.toLowerCase() !== MODERN_JWXT_HOST
+    || target.username
+    || target.password
+    || target.hash
+    || !target.pathname.startsWith("/jsxsd/")
+  ) throw Errors.badRequest("新版教务请求地址不受信任");
+  return target;
+}
+
+function modernFormInit(target: URL, form?: Record<string, string>): RequestInit {
+  if (!form) return {};
+  return {
+    method: "POST",
+    body: new URLSearchParams(form).toString(),
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Referer: target.toString(),
+    },
   };
 }
 
@@ -1134,26 +1159,20 @@ async function renewModernJwxtSession(token: string, target: URL) {
 export async function jwxtFetchModernHtml(
   token: string,
   path: string,
-  options: { persistSession?: boolean } = {},
+  options: { persistSession?: boolean; form?: Record<string, string> } = {},
 ): Promise<string> {
   let sess = await getSession(token);
   if (!sess) throw Errors.unauthorized("教务会话已失效，请重新登录");
-  const target = new URL(path, MODERN_JWXT_ORIGIN);
-  if (
-    target.protocol !== "https:"
-    || target.hostname.toLowerCase() !== MODERN_JWXT_HOST
-    || target.username
-    || target.password
-    || target.hash
-    || !target.pathname.startsWith("/jsxsd/")
-  ) throw Errors.badRequest("新版教务请求地址不受信任");
-  let page = await fetchModernPage(sess, target);
+  const target = resolveModernJwxtTarget(path);
+  // 带 form 时以 POST 提交；会话过期后的续期探测仍用 GET，续期成功再重发表单。
+  const init = modernFormInit(target, options.form);
+  let page = await fetchModernPage(sess, target, init);
   if (modernPageNeedsLogin(page)) {
     const established = await renewModernJwxtSession(token, target);
     if (established) {
       sess = await getSession(token);
       if (!sess) throw Errors.unauthorized("教务会话已失效，请重新登录");
-      page = await fetchModernPage(sess, target);
+      page = await fetchModernPage(sess, target, init);
     }
   }
   if (modernPageNeedsLogin(page)) {
@@ -1164,6 +1183,62 @@ export async function jwxtFetchModernHtml(
   }
   if (options.persistSession !== false) await persistActiveSession(token, sess);
   return page.html;
+}
+
+export interface JwxtModernFile {
+  contentType: string;
+  byteLength: number;
+  dataBase64: string;
+}
+
+// Agent 通道单条消息上限 2MB，base64 之后仍要放得下。
+const MODERN_FILE_MAX_BYTES = 1_200_000;
+
+/** 以表单提交方式从新版教务导出一份 PDF（例如成绩单）；返回的不是 PDF 时按登录失效或导出未开放处理。 */
+export async function jwxtDownloadModernPdf(
+  token: string,
+  path: string,
+  form: Record<string, string> = {},
+): Promise<JwxtModernFile> {
+  let sess = await getSession(token);
+  if (!sess) throw Errors.unauthorized("教务会话已失效，请重新登录");
+  const target = resolveModernJwxtTarget(path);
+  const fetchFile = async (session: ActiveSession) => {
+    const result = await followRedirects(session.jar, target.toString(), modernFormInit(target, form));
+    const declared = Number(result.res.headers.get("content-length") || 0);
+    if (declared > MODERN_FILE_MAX_BYTES) throw Errors.badGateway("学校教务返回的文件过大");
+    const bytes = Buffer.from(await result.res.arrayBuffer());
+    if (bytes.length > MODERN_FILE_MAX_BYTES) throw Errors.badGateway("学校教务返回的文件过大");
+    const isPdf = bytes.subarray(0, 5).toString("latin1") === "%PDF-";
+    return {
+      bytes,
+      isPdf,
+      page: {
+        result,
+        finalHost: new URL(result.finalUrl).hostname.toLowerCase(),
+        html: isPdf ? "" : bytes.toString("utf8"),
+      },
+    };
+  };
+  let file = await fetchFile(sess);
+  if (!file.isPdf && modernPageNeedsLogin(file.page)) {
+    const established = await renewModernJwxtSession(token, target);
+    if (established) {
+      sess = await getSession(token);
+      if (!sess) throw Errors.unauthorized("教务会话已失效，请重新登录");
+      file = await fetchFile(sess);
+    }
+  }
+  if (!file.isPdf && modernPageNeedsLogin(file.page)) {
+    throw Errors.unauthorized("统一认证会话已失效，请重新登录");
+  }
+  if (!file.isPdf) throw Errors.badGateway("学校教务暂时没有返回可下载的文件");
+  await persistActiveSession(token, sess);
+  return {
+    contentType: "application/pdf",
+    byteLength: file.bytes.length,
+    dataBase64: file.bytes.toString("base64"),
+  };
 }
 
 export interface CpuFetchTextResult {

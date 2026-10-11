@@ -33,6 +33,7 @@ export type CacheDomain =
   | "jwxt-calendar"
   | "jwxt-progress"
   | "jwxt-pyfa"
+  | "jwxt-records"
   | "jwxt-iapps"
   | "user-avatar"
   | "jwxt-iapp-icon";

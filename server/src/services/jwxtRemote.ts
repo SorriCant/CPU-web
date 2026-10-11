@@ -122,6 +122,11 @@ export function getPyfa(token: string): ReturnType<typeof local.getPyfa> {
     .then((r) => r.parsed) as ReturnType<typeof local.getPyfa>;
 }
 
+export function getRecords(token: string, args: Parameters<typeof local.getRecords>[1]): ReturnType<typeof local.getRecords> {
+  return call<{ parsed: Awaited<ReturnType<typeof local.getRecords>> }>("/v1/records", { token, ...args })
+    .then((r) => r.parsed) as ReturnType<typeof local.getRecords>;
+}
+
 export function getIApps(token: string): ReturnType<typeof local.getIApps> {
   return call<{ apps: Awaited<ReturnType<typeof local.getIApps>> }>("/v1/iapps", { token })
     .then((r) => r.apps) as ReturnType<typeof local.getIApps>;
