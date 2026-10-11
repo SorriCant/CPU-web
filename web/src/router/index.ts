@@ -13,7 +13,7 @@ import {
   isNativeForumIntranetOnlyAccount,
   isNativeScheduleShell,
   shouldHideHarmonyAssistant,
-  shouldHideNativeYaodaCanFly,
+  shouldHideNativeMiniGames,
 } from "@/utils/clientInfo";
 import { preloadScheduleBackgroundAsset } from "@/utils/scheduleBackgroundStorage";
 import { readForumListRestoreState } from "@/utils/forumListRestore";
@@ -181,7 +181,10 @@ export const router = createRouter({
         { path: "services", name: "services", component: loadServicesView, meta: { title: "校园服务", public: true } },
         { path: "services/tools", name: "service-tools", component: () => import("@/views/services/Tools.vue"), meta: { title: "校园小工具", public: true } },
         { path: "services/tools/assessment-form", name: "service-assessment-form", component: () => import("@/views/services/AssessmentFormTool.vue"), meta: { title: "综测填表工具", public: true } },
-        { path: "services/tools/yaoda-can-fly", name: "service-yaoda-can-fly", component: () => import("@/views/services/YaodaCanFly.vue"), meta: { nativeChrome: "page", title: "药大人能飞", public: true, fullWidthContent: true } },
+        { path: "services/tools/games", name: "service-games", component: () => import("@/views/services/games/Index.vue"), meta: { title: "小游戏", public: true, miniGame: true } },
+        { path: "services/tools/yaoda-can-fly", name: "service-yaoda-can-fly", component: () => import("@/views/services/games/YaodaCanFly.vue"), meta: { nativeChrome: "page", title: "药大人能飞", public: true, fullWidthContent: true, miniGame: true } },
+        // 已发布的原生壳只对 /services/tools/yaoda-can-fly 这个前缀隐藏自己的顶栏和底栏，其他游戏页也放在它下面。
+        { path: "services/tools/yaoda-can-fly/tomato-egg-noodles", name: "service-tomato-egg-noodles", component: () => import("@/views/services/games/TomatoEggNoodles.vue"), meta: { nativeChrome: "page", title: "番茄鸡蛋面", public: true, fullWidthContent: true, miniGame: true } },
         { path: "services/tools/voicehub", name: "service-voicehub", component: () => import("@/views/services/VoiceHubLaunch.vue"), meta: { nativeChrome: "page", title: "药苑之声", public: true, fullWidthContent: true } },
         { path: "services/tools/manage", name: "service-tools-manage", component: () => import("@/views/services/ToolManage.vue"), meta: { title: "小工具管理" } },
         { path: "services/tools/qqbot-reminders", redirect: "/messages/qqbot-reminders" },
@@ -290,10 +293,7 @@ router.beforeEach(async (to) => {
     return { name: "home", replace: true };
   }
 
-  if (
-    to.name === "service-yaoda-can-fly"
-    && shouldHideNativeYaodaCanFly(Boolean(auth.user), auth.user?.username)
-  ) {
+  if (to.meta.miniGame && shouldHideNativeMiniGames(Boolean(auth.user), auth.user?.username)) {
     return { name: "services", replace: true };
   }
 

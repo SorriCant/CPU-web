@@ -113,7 +113,7 @@ import TopicListItem from "@/components/forum/TopicListItem.vue";
 import { searchApi, type SearchResult } from "@/api/search";
 import { useAuthStore } from "@/stores/auth";
 import { isForumDestination } from "@/utils/nativeForumVisibility";
-import { isCampusAssistantDestination, isNativeForumIntranetOnlyAccount, shouldHideHarmonyAssistant, shouldHideNativeYaodaCanFly } from "@/utils/clientInfo";
+import { isCampusAssistantDestination, isNativeForumIntranetOnlyAccount, isMiniGameDestination, shouldHideHarmonyAssistant, shouldHideNativeMiniGames } from "@/utils/clientInfo";
 
 const route = useRoute();
 const router = useRouter();
@@ -132,8 +132,8 @@ const displayedServices = computed(() => (result.value?.services || [])
   .filter((service) => !auth.forumHidden || !isForumDestination(String(service?.url || "")))
   .filter((service) => !assistantHiddenForClient.value || !isCampusAssistantDestination(service?.url))
   .filter((service) => !(
-  shouldHideNativeYaodaCanFly(auth.isLoggedIn, auth.user?.username)
-  && String(service?.url || "").includes("/services/tools/yaoda-can-fly")
+  shouldHideNativeMiniGames(auth.isLoggedIn, auth.user?.username)
+  && isMiniGameDestination(service?.url)
 )));
 const resultCount = computed(() => {
   if (!result.value) return 0;

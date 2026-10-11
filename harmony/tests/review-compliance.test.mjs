@@ -60,9 +60,9 @@ test('iOS and Harmony Web shells apply the account-specific forum and game polic
   const nativeUas = ['CPUWebIOSApp/1 CPUTimeNative/1', 'CPUWebHarmonyApp/20 CPUTimeNative/1'];
 
   for (const ua of nativeUas) {
-    assert.equal(api.shouldHideNativeYaodaCanFly(false, null, ua), true);
-    assert.equal(api.shouldHideNativeYaodaCanFly(true, '2020240384', ua), true);
-    assert.equal(api.shouldHideNativeYaodaCanFly(true, '2020240385', ua), false);
+    assert.equal(api.shouldHideNativeMiniGames(false, null, ua), true);
+    assert.equal(api.shouldHideNativeMiniGames(true, '2020240384', ua), true);
+    assert.equal(api.shouldHideNativeMiniGames(true, '2020240385', ua), false);
     assert.equal(api.isNativeForumIntranetOnlyAccount('2020240384', ua), true);
     assert.equal(api.isNativeForumIntranetOnlyAccount('2020240385', ua), false);
   }
@@ -74,7 +74,7 @@ test('iOS and Harmony Web shells apply the account-specific forum and game polic
   assert.equal(api.shouldHideHarmonyAssistant(false, null, 'CPUWebIOSApp/1 CPUTimeNative/1'), false);
   assert.equal(api.shouldHideHarmonyAssistant(true, '2020240384', 'Chrome'), false);
 
-  assert.equal(api.shouldHideNativeYaodaCanFly(false, null, 'Chrome'), false);
+  assert.equal(api.shouldHideNativeMiniGames(false, null, 'Chrome'), false);
   assert.equal(api.isNativeForumIntranetOnlyAccount('2020240384', 'CPUWebScheduleApp/38'), false);
 });
 
@@ -93,7 +93,7 @@ function loadMainRouteGuard({ user = null, hideGame = false, hideAssistant = fal
     CACHE_FIRST_EDUCATION_ROUTES: new Set(), FEATURE_GATED: {},
     firstRouteValue: (value) => value,
     LEGACY_FILE_COLLECTION_SUBMIT_PREFIX: '/legacy-file-collection/',
-    shouldHideNativeYaodaCanFly: () => hideGame,
+    shouldHideNativeMiniGames: () => hideGame,
     shouldHideHarmonyAssistant: () => hideAssistant,
     isNativeForumIntranetOnlyAccount: () => restrictForum,
     ElMessage: { info: (message) => messages.push(message) },
@@ -104,8 +104,8 @@ function loadMainRouteGuard({ user = null, hideGame = false, hideAssistant = fal
   return { guard, messages };
 }
 
-function mainRoute(path, name) {
-  return { path, fullPath: path, name, meta: { public: true }, query: {}, params: {} };
+function mainRoute(path, name, meta = {}) {
+  return { path, fullPath: path, name, meta: { public: true, ...meta }, query: {}, params: {} };
 }
 
 test('the native intranet-only account is stopped at every forum route family with the required message', async () => {
@@ -122,10 +122,47 @@ test('the native intranet-only account is stopped at every forum route family wi
 });
 
 test('hidden native game routes cannot be opened directly', async () => {
+  const routerSource = readFileSync(new URL('../../web/src/router/index.ts', import.meta.url), 'utf8');
+  const gameRoutes = [
+    ['/services/tools/games', 'service-games'],
+    ['/services/tools/yaoda-can-fly', 'service-yaoda-can-fly'],
+    ['/services/tools/yaoda-can-fly/tomato-egg-noodles', 'service-tomato-egg-noodles'],
+  ];
   const { guard } = loadMainRouteGuard({ hideGame: true });
-  const result = await guard(mainRoute('/services/tools/yaoda-can-fly', 'service-yaoda-can-fly'));
-  assert.equal(result.name, 'services');
-  assert.equal(result.replace, true);
+  for (const [path, name] of gameRoutes) {
+    const route = routerSource.split('\n').find((line) => line.includes(`name: "${name}"`)) || '';
+    assert.match(route, new RegExp(`path: "${path.slice(1)}"`, 'u'), name);
+    assert.match(route, /miniGame: true/u, name);
+    const result = await guard(mainRoute(path, name, { miniGame: true }));
+    assert.equal(result.name, 'services', name);
+    assert.equal(result.replace, true, name);
+  }
+  const open = loadMainRouteGuard({ hideGame: false });
+  for (const [path, name] of gameRoutes) {
+    assert.notEqual((await open.guard(mainRoute(path, name, { miniGame: true })))?.name, 'services', name);
+  }
+  assert.notEqual((await guard(mainRoute('/services/tools', 'service-tools')))?.name, 'services');
+});
+
+test('mini-game shortcuts are recognised wherever the admin points them', () => {
+  const code = buildSync({
+    entryPoints: [fileURLToPath(new URL('../../web/src/utils/clientInfo.ts', import.meta.url))],
+    bundle: true, write: false, format: 'cjs',
+    alias: { '@': fileURLToPath(new URL('../../web/src', import.meta.url)) },
+  }).outputFiles[0].text;
+  const context = vm.createContext({ module: { exports: {} }, URL, URLSearchParams,
+    navigator: { userAgent: 'Chrome', maxTouchPoints: 0 },
+    window: { location: { search: '' } }, sessionStorage: { getItem: () => null, setItem() {} },
+  });
+  vm.runInContext(code, context);
+  const { isMiniGameDestination } = context.module.exports;
+  for (const url of ['/services/tools/games', '/services/tools/games/', '/services/tools/yaoda-can-fly?game_release=1',
+    '/services/tools/yaoda-can-fly/tomato-egg-noodles', 'https://cputime.cn/services/tools/yaoda-can-fly']) {
+    assert.equal(isMiniGameDestination(url), true, url);
+  }
+  for (const url of ['/services/tools', '/services/tools/games-night', '/services/tools/voicehub', '', null]) {
+    assert.equal(isMiniGameDestination(url), false, String(url));
+  }
 });
 
 test('Harmony guests and the restricted account cannot open assistant routes directly', async () => {

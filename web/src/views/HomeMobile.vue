@@ -108,7 +108,7 @@ import ForumFeedCard from "@/components/forum/ForumFeedCard.vue";
 import SiteSearchBar from "@/components/search/SiteSearchBar.vue";
 import { useAuthStore } from "@/stores/auth";
 import { useSiteStore } from "@/stores/site";
-import { isCampusAssistantDestination, isNativeForumIntranetOnlyAccount, shouldHideHarmonyAssistant, shouldHideNativeYaodaCanFly } from "@/utils/clientInfo";
+import { isCampusAssistantDestination, isNativeForumIntranetOnlyAccount, isMiniGameDestination, shouldHideHarmonyAssistant, shouldHideNativeMiniGames } from "@/utils/clientInfo";
 import { forumCacheScope, readForumLatestFeed, writeForumLatestFeed } from "@/utils/forumCache";
 import { clearForumListRestoreState, readForumListRestoreState, writeForumListRestoreState } from "@/utils/forumListRestore";
 import { readHomeSummaryCache, writeHomeSummaryCache } from "@/utils/homeCache";
@@ -173,8 +173,8 @@ const visibleServices = computed(() => (summary.value?.services || [])
   .filter((service) => !auth.forumHidden || !isForumDestination(String(service?.url || "")))
   .filter((service) => assistantEntryVisible.value || !isCampusAssistantDestination(service?.url))
   .filter((service) => !(
-    shouldHideNativeYaodaCanFly(auth.isLoggedIn, auth.user?.username)
-    && String(service?.url || "").includes("/services/tools/yaoda-can-fly")
+    shouldHideNativeMiniGames(auth.isLoggedIn, auth.user?.username)
+    && isMiniGameDestination(service?.url)
   ))
   .slice(0, 4));
 const quickEntries = computed(() => {

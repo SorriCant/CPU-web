@@ -12,7 +12,7 @@ test("restricted native home remains useful without exposing forum content", () 
   assert.match(mobileHome, /label: "公告"[\s\S]*label: "失物"[\s\S]*label: "教务"[\s\S]*label: "服务"/u);
   assert.match(mobileHome, /v-if="!showForumContent" class="campus-services"/u);
   assert.match(mobileHome, /论坛仅限连接内网后使用/u);
-  assert.match(mobileHome, /shouldHideNativeYaodaCanFly/u);
+  assert.match(mobileHome, /shouldHideNativeMiniGames\(auth\.isLoggedIn, auth\.user\?\.username\)\s+&& isMiniGameDestination\(service\?\.url\)/u);
 });
 
 test("restricted native search requests and renders services only", () => {

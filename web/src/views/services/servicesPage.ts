@@ -7,7 +7,7 @@ import { serviceTools, type ServiceTool } from "@/data/serviceTools";
 import { useAuthStore } from "@/stores/auth";
 import { useJwxtStore } from "@/stores/jwxt";
 import { useSiteStore } from "@/stores/site";
-import { shouldHideNativeYaodaCanFly } from "@/utils/clientInfo";
+import { shouldHideNativeMiniGames } from "@/utils/clientInfo";
 import { detectVenueLaunchMode, openVenueReservationWithoutReferrer } from "@/utils/venueReservation";
 import { readViewCache, writeViewCache } from "@/utils/viewCache";
 
@@ -24,7 +24,7 @@ export function useServiceTools() {
   const toolAccessMap = computed(() => Object.fromEntries(toolMetas.value.map((item) => [item.code, item])));
   const visibleTools = computed(() => serviceTools.filter((tool) => (
     toolAccessMap.value[tool.slug]?.isVisible !== false
-    && !(tool.slug === "yaoda_can_fly" && shouldHideNativeYaodaCanFly(auth.isLoggedIn, auth.user?.username))
+    && !(tool.slug === "mini_games" && shouldHideNativeMiniGames(auth.isLoggedIn, auth.user?.username))
   )));
 
   onMounted(() => {

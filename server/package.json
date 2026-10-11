@@ -39,7 +39,8 @@
     "test:sponsor": "node --import tsx --test tests/sponsorCategories.test.ts",
     "test:direct-messages": "node --import tsx --test tests/directMessagePolicy.test.ts tests/directMessageModeration.test.ts tests/directMessageRemark.test.ts tests/forumReportPolicy.test.ts tests/forumReportLock.test.ts tests/textReviewPolicy.test.ts",
     "test:wechat": "node --import tsx --test tests/wechatService.test.ts",
-    "test:yaoda-flight": "node --import tsx --test tests/yaodaFlight.test.ts"
+    "test:yaoda-flight": "node --import tsx --test tests/yaodaFlight.test.ts",
+    "test:tomato-noodle": "node --import tsx --test tests/tomatoNoodle.test.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

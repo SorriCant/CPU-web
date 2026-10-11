@@ -16,7 +16,7 @@ import {
   NJU_FLIGHT_PHYSICS,
   njuCircleIntersectsRect,
   njuFlightPipeGeometry,
-} from "../../web/src/views/services/yaodaFlightDifficulty";
+} from "../../web/src/views/services/games/yaodaFlightDifficulty";
 
 test("药大人能飞对齐南大人能飞原站物理常量", () => {
   assert.deepEqual(NJU_FLIGHT_PHYSICS, {

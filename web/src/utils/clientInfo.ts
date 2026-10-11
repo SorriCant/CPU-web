@@ -138,13 +138,27 @@ export function isNativeForumIntranetOnlyAccount(username?: string | null, ua = 
     && String(username || "").trim() === NATIVE_FORUM_INTRANET_ONLY_USERNAME;
 }
 
-export function shouldHideNativeYaodaCanFly(
+/** iOS 和鸿蒙原生端里，游客与内网限制账号看不到任何小游戏：合集入口、合集页和每个游戏页都按这条判断。 */
+export function shouldHideNativeMiniGames(
   isLoggedIn: boolean,
   username?: string | null,
   ua = navigator.userAgent,
 ) {
   return isIosOrHarmonyNativeApp(ua)
     && (!isLoggedIn || String(username || "").trim() === NATIVE_FORUM_INTRANET_ONLY_USERNAME);
+}
+
+/** 后台配置的快捷入口是否指向小游戏（合集页或某个游戏页）。 */
+export function isMiniGameDestination(destination?: string | null) {
+  try {
+    const path = decodeURIComponent(new URL(String(destination || ""), "https://cpu.local").pathname)
+      .replace(/\\/g, "/")
+      .replace(/\/+$/, "");
+    return ["/services/tools/games", "/services/tools/yaoda-can-fly"]
+      .some((prefix) => path === prefix || path.startsWith(prefix + "/"));
+  } catch {
+    return false;
+  }
 }
 
 export function shouldHideHarmonyAssistant(
