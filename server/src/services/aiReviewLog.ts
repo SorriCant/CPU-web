@@ -1,7 +1,8 @@
 import { prisma } from "../prisma";
+import type { AiLogScene } from "../shared/aiLogScenes";
 
 export type AiReviewLogInput = {
-  kind: "topic" | "reply" | "direct-message" | "nickname" | "profile" | "topic-edit" | "song-review" | "smart-post" | "image" | "video" | "qqbot-group-ad" | "campus-assistant" | "learning-answer";
+  kind: AiLogScene;
   targetId?: number | null;
   targetLabel?: string | null;
   targetUrl?: string | null;

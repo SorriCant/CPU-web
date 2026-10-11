@@ -92,21 +92,11 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { computed, onMounted, reactive, ref } from "vue";
 import { adminApi, type AiReviewLogRow } from "@/api/admin";
 import { fmtDate } from "@/utils/format";
+import { aiLogSceneLabel, aiLogSceneOptions } from "../../../../server/src/shared/aiLogScenes";
 
-const sceneOptions = [
-  { label: "药苑之声歌曲审核", value: "song-review" },
-  { label: "拾间 AI 对话", value: "campus-assistant" },
-  { label: "学习通 AI 解题", value: "learning-answer" },
-  { label: "帖子审核", value: "topic" },
-  { label: "回复审核", value: "reply" },
-  { label: "编辑相似度", value: "topic-edit" },
-  { label: "图片审核", value: "image" },
-  { label: "视频审核", value: "video" },
-  { label: "QQ群广告过滤", value: "qqbot-group-ad" },
-];
 const filters = reactive({ kind: "", status: "", q: "", page: 1, size: 30 });
 const dateRange = ref<string[]>([]);
 const rows = ref<AiReviewLogRow[]>([]);
@@ -115,10 +105,9 @@ const loading = ref(false);
 const errorMessage = ref("");
 const summary = reactive({ success: 0, error: 0, started: 0, averageDurationMs: 0, pointCost: 0 });
 let requestSeq = 0;
-
-function sceneLabel(kind: string) {
-  return sceneOptions.find((item) => item.value === kind)?.label || kind || "未知场景";
-}
+// 场景清单和服务端写日志用的是同一份；日志里出现了没登记的场景也列出来。
+const sceneOptions = computed(() => aiLogSceneOptions([filters.kind, ...rows.value.map((row) => row.kind)]));
+const sceneLabel = aiLogSceneLabel;
 
 function statusLabel(status: string) {
   return status === "success" ? "成功" : status === "error" ? "失败" : "进行中";

@@ -491,14 +491,7 @@
 
       <div class="filters">
         <el-select v-model="filters.kind" clearable placeholder="类型" style="width: 150px" @change="loadLogs">
-          <el-option label="帖子" value="topic" />
-          <el-option label="回复" value="reply" />
-          <el-option label="编辑相似度" value="topic-edit" />
-          <el-option label="智慧发帖" value="smart-post" />
-          <el-option label="歌曲审核" value="song-review" />
-          <el-option label="QQ群广告" value="qqbot-group-ad" />
-          <el-option label="图片" value="image" />
-          <el-option label="视频" value="video" />
+          <el-option v-for="item in logSceneOptions" :key="item.value" :label="item.label" :value="item.value" />
         </el-select>
         <el-select v-model="filters.status" clearable placeholder="状态" style="width: 140px" @change="loadLogs">
           <el-option label="开始" value="started" />
@@ -525,7 +518,9 @@
           <el-table-column prop="startedAt" label="时间" width="170">
             <template #default="{ row }">{{ fmtDate(row.startedAt, "YYYY-MM-DD HH:mm:ss") }}</template>
           </el-table-column>
-          <el-table-column prop="kind" label="类型" width="110" />
+          <el-table-column label="类型" width="130">
+            <template #default="{ row }">{{ aiLogSceneLabel(row.kind) }}</template>
+          </el-table-column>
           <el-table-column prop="status" label="状态" width="90" />
           <el-table-column prop="model" label="模型" min-width="140" />
           <el-table-column prop="targetLabel" label="目标" min-width="180" />
@@ -540,6 +535,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from "vue";
+import { aiLogSceneLabel, aiLogSceneOptions } from "../../../../server/src/shared/aiLogScenes";
 import { ElMessage, ElMessageBox } from "element-plus";
 import {
   adminApi,
@@ -579,6 +575,8 @@ let promptDefaultsLoadSeq = 0;
 let logsLoadSeq = 0;
 let videosLoadSeq = 0;
 const filters = reactive({ kind: "", status: "", page: 1, size: 20 });
+// 场景清单和服务端写日志用的是同一份。
+const logSceneOptions = computed(() => aiLogSceneOptions([filters.kind, ...logs.value.map((row) => row.kind)]));
 const videoFilters = reactive<{ status: "" | "pending" | "manual_review" | "rejected" | "approved" | "error"; page: number; size: number }>({
   status: "manual_review",
   page: 1,
