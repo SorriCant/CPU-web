@@ -3,6 +3,9 @@ import test from "node:test";
 import {
   currentSlotIndex,
   filterRooms,
+  freeSlotCount,
+  freeUntil,
+  groupRoomsByBuilding,
   recordGroups,
   roomBuilding,
   roomBuildings,
@@ -64,13 +67,14 @@ test("enrollment shows the dropped group only when something was dropped", () =>
   assert.deepEqual(recordGroups("enrollment", { selected, dropped: [], credits: 3 }).map((group) => group.key), ["selected"]);
   const groups = recordGroups("enrollment", { selected, dropped: [{ courseName: "木材学", dropType: "学生退课" }], credits: 3 });
   assert.deepEqual(groups.map((group) => [group.key, group.note]), [["selected", "1 门 · 3 学分"], ["dropped", "1 门"]]);
-  assert.equal(groups[0].cards[0].badgeTone, "accent");
+  // 必修用和成绩页一样的红色标签。
+  assert.equal(groups[0].cards[0].badgeType, "danger");
   assert.equal(groups[1].cards[0].badge, "学生退课");
 });
 
 test("selection rounds are labelled against the current time", () => {
   const data = { list: [{ name: "新生公选课", startsAt: "2026-10-10 12:00", endsAt: "2026-10-13 00:00" }] };
-  const at = (value: string) => recordGroups("election-rounds", data, Date.parse(value))[0].cards[0].badge;
+  const at = (value: string) => recordGroups("election-rounds", data, { now: Date.parse(value) })[0].cards[0].badge;
   assert.equal(at("2026-10-09T08:00:00"), "未开始");
   assert.equal(at("2026-10-11T08:00:00"), "进行中");
   assert.equal(at("2026-10-14T08:00:00"), "已结束");
@@ -81,5 +85,38 @@ test("student status always lists both groups so an empty one reads as none", ()
   assert.deepEqual(groups.map((group) => [group.label, group.note, group.cards.length]), [
     ["学籍预警", "无", 0],
     ["学籍异动", "无", 0],
+  ]);
+});
+
+test("a single-list dataset takes a heading when it shares a page with others", () => {
+  const data = { list: [{ major: "药物化学", quota: 12, applicants: 0 }] };
+  assert.deepEqual(recordGroups("major-transfer", data).map((group) => [group.label, group.note]), [["", undefined]]);
+  assert.deepEqual(
+    recordGroups("major-transfer", data, { label: "转专业计划" }).map((group) => [group.label, group.note]),
+    [["转专业计划", "1 条"]],
+  );
+});
+
+test("free-until runs to the end of the last consecutive free slot", () => {
+  const slots = [
+    { name: "第一大节", periods: "1-2", start: "08:00", end: "09:40" },
+    { name: "第二大节", periods: "3-4", start: "09:55", end: "11:35" },
+    { name: "中午", periods: "13-14", start: "11:40", end: "13:15" },
+    { name: "第三大节", periods: "5-6", start: "13:30", end: "15:10" },
+  ];
+  const room: FreeRoom = { name: "A104", states: ["class", "", "", "class"] };
+  assert.equal(freeUntil(room, slots, 1), "13:15");
+  assert.equal(freeUntil(room, slots, 2), "13:15");
+  assert.equal(freeUntil(room, slots, 0), "");
+  assert.equal(freeUntil({ name: "B101", states: ["", "", "", ""] }, slots, 1), "15:10");
+  assert.equal(freeSlotCount(room), 2);
+});
+
+test("rooms are listed building by building with the catch-all group last", () => {
+  const grouped = groupRoomsByBuilding([...rooms, { name: "A201", states: ["", "", ""] }]);
+  assert.deepEqual(grouped.map((group) => [group.name, group.rooms.map((room) => room.name)]), [
+    ["A 楼", ["A104", "A201"]],
+    ["D 楼", ["D106-1"]],
+    ["其他", ["千人礼堂"]],
   ]);
 });

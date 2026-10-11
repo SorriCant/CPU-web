@@ -15,8 +15,9 @@ import {
 } from "@/utils/jwxtTabCache";
 
 export type DataTab = Exclude<JwxtDataTab, "midterm">; // 期中暂时停用；恢复时移除 Exclude。
-// “更多”里的数据由 RecordsPane 自己按需读取，不走这里的整页缓存。
-export type JwxtTab = DataTab | "more" | "debug";
+// 选课、教室两个标签（以及成绩、学业里新增的视图）由各自的面板按需读取，不走这里的整页缓存。
+export type ExtraTab = "selection" | "rooms";
+export type JwxtTab = DataTab | ExtraTab | "debug";
 
 export type JwxtPageLayout = "desktop" | "mobile";
 
@@ -72,7 +73,7 @@ export function useJwxtPage(layout: Ref<JwxtPageLayout>) {
       ? ["schedule", "grades", /* "midterm", */ "progress", "pyfa"]
       : ["grades", /* "midterm", */ "progress", "pyfa"];
   });
-  const showMoreTab = computed(() => availableDataTabs.value.includes("grades"));
+  const showExtraTabs = computed(() => availableDataTabs.value.includes("grades"));
   const hasJwxtTabs = computed(() => availableDataTabs.value.length > 0 || isDev.value);
   const hasCachedData = computed(() => availableDataTabs.value.some((item) => Boolean(getTabData(item))));
   const academicDataUnavailable = computed(() => Boolean(
@@ -223,8 +224,8 @@ export function useJwxtPage(layout: Ref<JwxtPageLayout>) {
       if (!isDev.value) tab.value = firstVisibleTab();
       return;
     }
-    if (tab.value === "more") {
-      if (!showMoreTab.value) tab.value = firstVisibleTab();
+    if (tab.value === "selection" || tab.value === "rooms") {
+      if (!showExtraTabs.value) tab.value = firstVisibleTab();
       return;
     }
     if (!availableDataTabs.value.includes(tab.value as DataTab)) {
@@ -542,7 +543,7 @@ export function useJwxtPage(layout: Ref<JwxtPageLayout>) {
     snapResult,
     isDev,
     availableDataTabs,
-    showMoreTab,
+    showExtraTabs,
     hasJwxtTabs,
     academicDataUnavailable,
     showDataShell,

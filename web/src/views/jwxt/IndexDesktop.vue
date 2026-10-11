@@ -188,7 +188,7 @@
         </el-tab-pane>
         <el-tab-pane v-if="!isGraduateIdentity" name="grades" lazy>
           <template #label><AppIcon name="chart" /> 成绩</template>
-          <GradesPane :data="grades" :loading="tabLoading" />
+          <GradesTab :data="grades" :loading="tabLoading" :active="tab === 'grades'" />
         </el-tab-pane>
         <!-- 期中功能暂时停用，保留组件和接入代码，恢复时同步启用 jwxtPrewarm.ts 中的预加载。
         <el-tab-pane v-if="!isGraduateIdentity" name="midterm" lazy>
@@ -198,15 +198,19 @@
         -->
         <el-tab-pane v-if="!isGraduateIdentity" name="progress" lazy>
           <template #label><AppIcon name="school" /> 学业完成情况</template>
-          <ProgressPane :data="progress" :loading="tabLoading" />
+          <ProgressTab :data="progress" :loading="tabLoading" :active="tab === 'progress'" />
         </el-tab-pane>
         <el-tab-pane v-if="!isGraduateIdentity" name="pyfa" lazy>
           <template #label><AppIcon name="course" /> 培养方案</template>
           <PyfaPane :data="pyfa" :loading="tabLoading" />
         </el-tab-pane>
-        <el-tab-pane v-if="showMoreTab" name="more" lazy>
-          <template #label><AppIcon name="board" /> 更多</template>
-          <RecordsPane :active="tab === 'more'" />
+        <el-tab-pane v-if="showExtraTabs" name="selection" lazy>
+          <template #label><AppIcon name="ticket" /> 选课</template>
+          <SelectionTab :active="tab === 'selection'" />
+        </el-tab-pane>
+        <el-tab-pane v-if="showExtraTabs" name="rooms" lazy>
+          <template #label><AppIcon name="home" /> 教室</template>
+          <RoomsTab :active="tab === 'rooms'" />
         </el-tab-pane>
         <el-tab-pane name="debug" v-if="isDev">
           <template #label><AppIcon name="tools" /> 调试</template>
@@ -240,11 +244,12 @@ import { Lock, User, Refresh, CircleCheckFilled, CircleClose } from "@element-pl
 import PrivacyConsent from "@/components/common/PrivacyConsent.vue";
 import { useInjectedJwxtPage } from "./jwxtPage";
 const SchedulePane = defineAsyncComponent(() => import("@/components/jwxt/SchedulePane.vue"));
-const GradesPane = defineAsyncComponent(() => import("@/components/jwxt/GradesPane.vue"));
+const GradesTab = defineAsyncComponent(() => import("@/components/jwxt/tabs/GradesTab.vue"));
 // const MidtermGradesPane = defineAsyncComponent(() => import("@/components/jwxt/MidtermGradesPane.vue"));
-const ProgressPane = defineAsyncComponent(() => import("@/components/jwxt/ProgressPane.vue"));
+const ProgressTab = defineAsyncComponent(() => import("@/components/jwxt/tabs/ProgressTab.vue"));
 const PyfaPane = defineAsyncComponent(() => import("@/components/jwxt/PyfaPane.vue"));
-const RecordsPane = defineAsyncComponent(() => import("@/components/jwxt/RecordsPane.vue"));
+const SelectionTab = defineAsyncComponent(() => import("@/components/jwxt/tabs/SelectionTab.vue"));
+const RoomsTab = defineAsyncComponent(() => import("@/components/jwxt/tabs/RoomsTab.vue"));
 
 const {
   jwxt,
@@ -270,7 +275,7 @@ const {
   snapping,
   snapResult,
   isDev,
-  showMoreTab,
+  showExtraTabs,
   hasJwxtTabs,
   academicDataUnavailable,
   showDataShell,

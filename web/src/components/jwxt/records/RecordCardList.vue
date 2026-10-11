@@ -1,30 +1,33 @@
 <template>
-  <div class="rec-groups">
-    <section v-for="group in groups" :key="group.key" class="rec-group">
-      <header v-if="group.label" class="rec-group-head">
-        <b>{{ group.label }}</b>
-        <span v-if="group.note">{{ group.note }}</span>
-      </header>
-      <p v-if="!group.cards.length" class="rec-empty">{{ group.label ? "暂无记录" : emptyText }}</p>
-      <ul v-else class="rec-cards">
-        <li v-for="card in group.cards" :key="card.key" class="rec-card">
-          <div class="rec-card-main">
-            <div class="rec-card-title">
-              <b>{{ card.title }}</b>
-              <span v-if="card.badge" class="rec-badge" :class="`is-${card.badgeTone || 'muted'}`">{{ card.badge }}</span>
+  <div class="record-groups">
+    <section v-for="group in groups" :key="group.key" class="sem-block">
+      <div v-if="group.label" class="sem-head">
+        <h3>{{ group.label }}</h3>
+        <span v-if="group.note" class="sem-sum">{{ group.note }}</span>
+      </div>
+      <p v-if="!group.cards.length && group.label" class="record-none">暂无记录</p>
+      <el-empty v-else-if="!group.cards.length" :description="emptyText" />
+      <div v-else class="record-list">
+        <article v-for="card in group.cards" :key="card.key" class="record-card">
+          <div class="record-main">
+            <div class="record-top">
+              <div class="course-title">{{ card.title }}</div>
+              <el-tag v-if="card.badge" class="record-tag" size="small" :type="card.badgeType || 'info'" effect="plain">
+                {{ card.badge }}
+              </el-tag>
             </div>
-            <p v-if="card.sub" class="rec-card-sub">{{ card.sub }}</p>
-            <p v-if="card.meta.length" class="rec-card-meta">
+            <div v-if="card.sub" class="course-sub"><span>{{ card.sub }}</span></div>
+            <div v-if="card.meta.length" class="course-sub">
               <span v-for="item in card.meta" :key="item">{{ item }}</span>
-            </p>
-            <p v-for="line in card.lines" :key="line" class="rec-card-line">{{ line }}</p>
+            </div>
+            <div v-for="line in card.lines" :key="line" class="record-line">{{ line }}</div>
           </div>
-          <div v-if="card.value" class="rec-card-value">
+          <div v-if="card.value" class="record-value">
             <b>{{ card.value }}</b>
             <span v-if="card.valueLabel">{{ card.valueLabel }}</span>
           </div>
-        </li>
-      </ul>
+        </article>
+      </div>
     </section>
   </div>
 </template>
@@ -36,47 +39,42 @@ withDefaults(defineProps<{ groups: RecordCardGroup[]; emptyText?: string }>(), {
 </script>
 
 <style scoped lang="scss">
-.rec-groups { display: flex; flex-direction: column; gap: 16px; }
-.rec-group-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-.rec-group-head b { color: var(--cpu-text); font-size: var(--cpu-fs-m); font-weight: 500; }
-.rec-group-head span { color: var(--cpu-text-secondary); font-size: var(--cpu-fs-xs); }
-.rec-empty {
+// 分组标题、卡片与成绩页的学期分组、成绩卡片用同一套写法。
+.sem-block { margin-bottom: 20px; }
+.sem-block:last-child { margin-bottom: 0; }
+.sem-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 0 0 8px; }
+.sem-head h3 { margin: 0; color: var(--cpu-primary); font-size: var(--cpu-fs-m); font-weight: 500; }
+.sem-sum { color: var(--cpu-text-muted); font-size: var(--cpu-fs-xs); }
+
+.record-none {
   margin: 0;
-  padding: 18px 12px;
-  border: 1px dashed var(--cpu-border-soft);
+  padding: 14px 12px;
   border-radius: var(--cpu-radius-m);
+  background: var(--cpu-surface-subtle);
   color: var(--cpu-text-muted);
   font-size: var(--cpu-fs-s);
   text-align: center;
 }
-.rec-cards {
+
+.record-list {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  gap: 10px;
 }
-.rec-card {
+.record-card {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   min-width: 0;
-  padding: 10px 12px;
+  padding: 14px;
   border: 1px solid var(--cpu-border-soft);
-  border-radius: var(--cpu-radius-m);
+  border-radius: var(--cpu-radius-l);
   background: var(--cpu-card);
 }
-.rec-card-main { min-width: 0; flex: 1; }
-.rec-card-title { display: flex; align-items: flex-start; gap: 6px; }
-.rec-card-title b {
+.record-main { min-width: 0; flex: 1; }
+.record-top { display: flex; align-items: flex-start; gap: 8px; }
+.course-title {
   min-width: 0;
   color: var(--cpu-text);
   font-size: var(--cpu-fs-m);
@@ -84,46 +82,44 @@ withDefaults(defineProps<{ groups: RecordCardGroup[]; emptyText?: string }>(), {
   line-height: 1.45;
   overflow-wrap: anywhere;
 }
-.rec-badge {
-  flex-shrink: 0;
-  margin-top: 2px;
-  padding: 1px 6px;
-  border-radius: var(--cpu-radius-s);
-  background: var(--cpu-surface-subtle);
+.record-tag { flex: 0 0 auto; margin-top: 1px; }
+.course-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 7px;
   color: var(--cpu-text-secondary);
   font-size: var(--cpu-fs-xs);
-  line-height: 1.5;
-  white-space: nowrap;
-}
-.rec-badge.is-accent { background: var(--cpu-primary-soft); color: var(--cpu-primary); }
-.rec-badge.is-ok { background: var(--cpu-hue-green-bg); color: var(--cpu-hue-green-ink); }
-.rec-badge.is-warn { background: var(--cpu-hue-amber-bg); color: var(--cpu-hue-amber-ink); }
-.rec-card-sub,
-.rec-card-meta,
-.rec-card-line {
-  margin: 3px 0 0;
-  color: var(--cpu-text-secondary);
-  font-size: var(--cpu-fs-xs);
-  line-height: 1.6;
+  line-height: 1.4;
   overflow-wrap: anywhere;
 }
-.rec-card-meta { display: flex; flex-wrap: wrap; gap: 0 10px; }
-.rec-card-line { color: var(--cpu-text-muted); }
-.rec-card-value {
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-  align-items: flex-end;
-  gap: 1px;
-  max-width: 45%;
-  text-align: right;
+.course-sub + .course-sub { margin-top: 5px; }
+.record-line {
+  margin-top: 5px;
+  color: var(--cpu-text-muted);
+  font-size: var(--cpu-fs-xs);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
 }
-.rec-card-value b {
+.record-value {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 56px;
+  max-width: 42%;
+  padding: 7px 10px;
+  border-radius: var(--cpu-radius-s);
+  background: var(--cpu-surface-subtle);
+  text-align: center;
+}
+.record-value b {
   color: var(--cpu-text);
-  font-size: var(--cpu-fs-l);
-  font-weight: 500;
+  font-size: var(--cpu-fs-m);
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   line-height: 1.3;
 }
-.rec-card-value span { color: var(--cpu-text-muted); font-size: var(--cpu-fs-xs); white-space: nowrap; }
+.record-value span { color: var(--cpu-text-muted); font-size: var(--cpu-fs-xs); white-space: nowrap; }
 </style>

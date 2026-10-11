@@ -79,10 +79,11 @@
             :aria-labelledby="`edu-m-tab-${item.name}`"
           >
             <template v-if="visitedTabs.has(item.name)">
-              <GradesPane v-if="item.name === 'grades'" :data="grades" :loading="tabLoading && tab === 'grades'" />
-              <ProgressPane v-else-if="item.name === 'progress'" :data="progress" :loading="tabLoading && tab === 'progress'" />
+              <GradesTab v-if="item.name === 'grades'" :data="grades" :loading="tabLoading && tab === 'grades'" :active="tab === 'grades'" />
+              <ProgressTab v-else-if="item.name === 'progress'" :data="progress" :loading="tabLoading && tab === 'progress'" :active="tab === 'progress'" />
               <PyfaPane v-else-if="item.name === 'pyfa'" :data="pyfa" :loading="tabLoading && tab === 'pyfa'" />
-              <RecordsPane v-else-if="item.name === 'more'" :active="tab === 'more'" />
+              <SelectionTab v-else-if="item.name === 'selection'" :active="tab === 'selection'" />
+              <RoomsTab v-else-if="item.name === 'rooms'" :active="tab === 'rooms'" />
             </template>
           </div>
         </template>
@@ -229,22 +230,24 @@ import {
   CircleCloseFilled,
   Clock,
   DataAnalysis,
-  Grid,
   InfoFilled,
   Lock,
+  OfficeBuilding,
   Reading,
   Refresh,
   School,
+  Tickets,
   TopRight,
   User,
   WarningFilled,
 } from "@element-plus/icons-vue";
 import PrivacyConsent from "@/components/common/PrivacyConsent.vue";
-import { useInjectedJwxtPage, type DataTab, type JwxtTab } from "./jwxtPage";
-const GradesPane = defineAsyncComponent(() => import("@/components/jwxt/GradesPane.vue"));
-const ProgressPane = defineAsyncComponent(() => import("@/components/jwxt/ProgressPane.vue"));
+import { useInjectedJwxtPage, type DataTab, type ExtraTab, type JwxtTab } from "./jwxtPage";
+const GradesTab = defineAsyncComponent(() => import("@/components/jwxt/tabs/GradesTab.vue"));
+const ProgressTab = defineAsyncComponent(() => import("@/components/jwxt/tabs/ProgressTab.vue"));
 const PyfaPane = defineAsyncComponent(() => import("@/components/jwxt/PyfaPane.vue"));
-const RecordsPane = defineAsyncComponent(() => import("@/components/jwxt/RecordsPane.vue"));
+const SelectionTab = defineAsyncComponent(() => import("@/components/jwxt/tabs/SelectionTab.vue"));
+const RoomsTab = defineAsyncComponent(() => import("@/components/jwxt/tabs/RoomsTab.vue"));
 
 const {
   jwxt,
@@ -263,7 +266,7 @@ const {
   forgetBusy,
   reauthorizeBusy,
   availableDataTabs,
-  showMoreTab,
+  showExtraTabs,
   academicDataUnavailable,
   showDataShell,
   usingSavedCredentialRecovery,
@@ -283,18 +286,19 @@ const {
   useManualCredentials,
 } = useInjectedJwxtPage();
 
-// 移动端课表在独立课表页，这里提供成绩、学业、培养方案，以及“更多”里的其余教务数据。
-type MobileTab = Exclude<DataTab, "schedule"> | "more";
+// 移动端课表在独立课表页，这里提供成绩、学业、培养方案、选课和教室。
+type MobileTab = Exclude<DataTab, "schedule"> | ExtraTab;
 const tabMeta: Record<MobileTab, { label: string; icon: unknown }> = {
   grades: { label: "成绩", icon: DataAnalysis },
   progress: { label: "学业", icon: School },
   pyfa: { label: "培养", icon: Reading },
-  more: { label: "更多", icon: Grid },
+  selection: { label: "选课", icon: Tickets },
+  rooms: { label: "教室", icon: OfficeBuilding },
 };
 const visibleTabs = computed(() => {
   const names: MobileTab[] = availableDataTabs.value
     .filter((name): name is Exclude<DataTab, "schedule"> => name !== "schedule");
-  if (showMoreTab.value) names.push("more");
+  if (showExtraTabs.value) names.push("selection", "rooms");
   return names.map((name) => ({ name, ...tabMeta[name] }));
 });
 
