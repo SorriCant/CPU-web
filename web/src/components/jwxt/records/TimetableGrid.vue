@@ -158,6 +158,7 @@ const holidays = computed(() => (calendar.value?.adjustments ?? []).filter((item
 const days = computed(() => timetableWeekDays({
   blocks: blocks.value,
   week: week.value,
+  withClasses: props.withClasses,
   dates: weekDates.value,
   today: today.value,
   holidays: holidays.value,

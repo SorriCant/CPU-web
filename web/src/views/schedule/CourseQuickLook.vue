@@ -119,7 +119,9 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
   max-width: 520px;
   max-height: min(560px, 86dvh);
   overflow-y: auto;
-  padding: 24px 20px calc(18px + env(safe-area-inset-bottom));
+  // iOS 原生壳的悬浮标签栏叠在 WebView 底部：弹层贴底，内容让到标签栏上面。
+  // 这个变量只有原生壳会设（安卓设为 0），浏览器里就是原来的留白。
+  padding: 24px 20px calc(18px + max(env(safe-area-inset-bottom), var(--cpu-ios-bottom-clearance, 0px)));
   border-radius: 20px 20px 0 0;
   background: var(--cpu-card, #fff);
   color: var(--cpu-text, #16191d);
@@ -213,6 +215,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
   font-size: 16px;
   line-height: 1.4;
   word-break: break-word;
+  // 备注里的换行照原样分行。
+  white-space: pre-line;
 }
 .quick-look-note {
   margin: 16px 0 0;

@@ -53,15 +53,74 @@ function unique(values: Array<string | undefined>) {
   return [...new Set(values.map((value) => (value ?? "").trim()).filter(Boolean))];
 }
 
+/** 一门课在某个时间的一处上课地点：哪间教室、谁上、哪几周。 */
+export interface TimetableSession {
+  room: string;
+  teachers: string[];
+  /** 空数组表示每周都上。 */
+  weekList: number[];
+  classes: string[];
+}
+
+/** 课程块，带着它在这个时间的全部上课地点。 */
+export interface TimetableBlock extends WeekCourseBlock {
+  sessions: TimetableSession[];
+}
+
 export interface TimetableBlocks {
-  blocks: WeekCourseBlock[];
+  blocks: TimetableBlock[];
   /** 没有星期、节次，或者节次不在节次表里的排课，网格里画不出来。 */
   unplaced: TimetableRow[];
 }
 
+function mergedWeeks(lists: number[][]) {
+  // 有一处没写周次就当每周都上。
+  if (lists.some((list) => !list.length)) return [];
+  return [...new Set(lists.flat())].sort((a, b) => a - b);
+}
+
+function sessionInWeek(session: TimetableSession, week: number) {
+  return !session.weekList.length || session.weekList.includes(week);
+}
+
 /**
- * 排课行换成课程块。同一门课在同一时间、同一间教室的几行（前后半学期换老师、
- * 几个班合上）并成一块：周次取并集，老师和班级各列一遍。
+ * 课程块上显示什么。只在一间教室上的课写教室和老师；分在好几间教室同时上的课
+ * （大学英语这种分级教学）写“N 个教室”，每间教室谁上列在备注里。
+ */
+function describeSessions(name: string, sessions: TimetableSession[], withClasses: boolean): WeekCourseBlock["course"] {
+  const weekList = mergedWeeks(sessions.map((session) => session.weekList));
+  const base = { name, weeks: formatWeekList(weekList), weekList };
+  if (sessions.length === 1) {
+    const [only] = sessions;
+    return {
+      ...base,
+      teacher: only.teachers.join("、") || undefined,
+      location: only.room || undefined,
+      ...(withClasses && only.classes.length ? { slotNote: `上课班级：${only.classes.join("、")}` } : {}),
+    };
+  }
+  const sameWeeks = sessions.every((session) => session.weekList.join() === sessions[0].weekList.join());
+  const lines = sessions.map((session) => [
+    session.room || "教室未定",
+    session.teachers.join("、"),
+    sameWeeks ? "" : formatWeekList(session.weekList),
+    withClasses ? session.classes.join("、") : "",
+  ].filter(Boolean).join(" · "));
+  // 周次有重合才是“同时”分班上；前后半学期各在一间教室的是换教室。
+  const together = sessions.some((a, i) => sessions.some((b, j) => i < j && (
+    !a.weekList.length || !b.weekList.length || a.weekList.some((week) => b.weekList.includes(week))
+  )));
+  const lead = together ? `分 ${sessions.length} 个教室同时上` : `先后在 ${sessions.length} 个教室上`;
+  return {
+    ...base,
+    location: `${sessions.length} 个教室`,
+    slotNote: `${lead}：\n${lines.join("\n")}`,
+  };
+}
+
+/**
+ * 排课行换成课程块。同一门课在同一时间的几行并成一块：同一间教室的（前后半学期换老师、
+ * 几个班合上）算一处，周次取并集；分在好几间教室的各算一处，格子里仍然只占一格。
  * `withClasses` 打开时把上课班级写进备注，查班级课表时班级就是自己，不用写。
  */
 export function timetableBlocks(
@@ -69,7 +128,8 @@ export function timetableBlocks(
   options: { maxSlot?: number; withClasses?: boolean } = {},
 ): TimetableBlocks {
   const maxSlot = options.maxSlot ?? 12;
-  const groups = new Map<string, { day: number; start: number; end: number; rows: TimetableRow[] }>();
+  const withClasses = Boolean(options.withClasses);
+  const groups = new Map<string, { day: number; start: number; end: number; name: string; rooms: Map<string, TimetableRow[]> }>();
   const unplaced: TimetableRow[] = [];
   for (const row of rows) {
     const day = WEEKDAYS.indexOf(row.weekday ?? "") + 1;
@@ -78,36 +138,35 @@ export function timetableBlocks(
       unplaced.push(row);
       continue;
     }
-    const key = [day, range.start, range.end, row.courseName, row.room ?? row.building ?? ""].join("|");
-    const group = groups.get(key);
-    if (group) group.rows.push(row);
-    else groups.set(key, { day, start: range.start, end: range.end, rows: [row] });
+    const key = [day, range.start, range.end, row.courseName].join("|");
+    let group = groups.get(key);
+    if (!group) {
+      group = { day, start: range.start, end: range.end, name: row.courseName, rooms: new Map() };
+      groups.set(key, group);
+    }
+    const room = (row.room ?? row.building ?? "").trim();
+    group.rooms.set(room, [...(group.rooms.get(room) ?? []), row]);
   }
 
   const blocks = [...groups.values()]
     .sort((a, b) => a.day - b.day || a.start - b.start || a.end - b.end)
-    .map((group, index): WeekCourseBlock => {
-      const first = group.rows[0];
-      // 有一行没写周次就当每周都上。
-      const everyWeek = group.rows.some((row) => !row.weeks);
-      const weekList = everyWeek ? [] : [...new Set(group.rows.flatMap((row) => weekListOf(row.weeks, row.weekType)))].sort((a, b) => a - b);
-      const classes = options.withClasses ? unique(group.rows.map((row) => row.className)) : [];
+    .map((group, index): TimetableBlock => {
+      const sessions = [...group.rooms.entries()]
+        .map(([room, list]): TimetableSession => ({
+          room,
+          teachers: unique(list.map((row) => row.teacher)),
+          weekList: mergedWeeks(list.map((row) => weekListOf(row.weeks, row.weekType))),
+          classes: unique(list.map((row) => row.className)),
+        }))
+        .sort((a, b) => a.room.localeCompare(b.room, "zh-Hans-CN"));
       return {
         day: group.day,
         bigSlot: Math.max(1, Math.ceil(group.start / 2)),
         startSlot: group.start,
         endSlot: group.end,
         index,
-        course: {
-          name: first.courseName,
-          teacher: unique(group.rows.map((row) => row.teacher)).join("、") || undefined,
-          location: first.room ?? first.building,
-          weeks: formatWeekList(weekList),
-          weekList,
-          startSlot: group.start,
-          endSlot: group.end,
-          ...(classes.length ? { slotNote: `上课班级：${classes.join("、")}` } : {}),
-        },
+        course: { ...describeSessions(group.name, sessions, withClasses), startSlot: group.start, endSlot: group.end },
+        sessions,
       };
     });
   return { blocks, unplaced };
@@ -115,6 +174,17 @@ export function timetableBlocks(
 
 function inWeek(block: WeekCourseBlock, week: number) {
   return !block.course.weekList.length || block.course.weekList.includes(week);
+}
+
+/**
+ * 这一周画出来的课程块：教室和老师只写这一周真的在上的那几处。前半学期在一间教室、
+ * 后半学期换到另一间的课，每一周都写当周那间教室；周次和备注里的完整安排仍然是整门课的。
+ */
+function blockForWeek(block: TimetableBlock, week: number, withClasses: boolean): WeekCourseBlock {
+  const active = block.sessions.filter((session) => sessionInWeek(session, week));
+  if (!active.length || active.length === block.sessions.length) return block;
+  const { location, teacher } = describeSessions(block.course.name, active, withClasses);
+  return { ...block, course: { ...block.course, location, teacher } };
 }
 
 /** 网格可以翻到第几周：校历的周数和排课里出现过的最后一周，取大的。 */
@@ -129,8 +199,10 @@ export function timetableColumns(blocks: WeekCourseBlock[]) {
 }
 
 export interface TimetableWeekInput {
-  blocks: WeekCourseBlock[];
+  blocks: TimetableBlock[];
   week: number;
+  /** 和 timetableBlocks 用同一个值。 */
+  withClasses?: boolean;
   /** 这一周周一到周日的日期（yyyy-MM-dd）；没有校历时不传，日期栏就只写星期。 */
   dates?: string[];
   today?: string;
@@ -140,7 +212,9 @@ export interface TimetableWeekInput {
 
 /** 某一周要画的每一天：这一周上的课，加上淡显在空节次里的非本周课程。 */
 export function timetableWeekDays(input: TimetableWeekInput): StyledDay[] {
-  const current = input.blocks.filter((block) => inWeek(block, input.week));
+  const current = input.blocks
+    .filter((block) => inWeek(block, input.week))
+    .map((block) => blockForWeek(block, input.week, Boolean(input.withClasses)));
   const pieces = placeCourseBlocks(current);
   const offWeek = placeCourseBlocks(selectOffWeekBlocks(input.blocks, current, () => input.week));
   return timetableColumns(input.blocks).map((day) => {

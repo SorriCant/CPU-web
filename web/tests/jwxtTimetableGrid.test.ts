@@ -105,3 +105,55 @@ test("weekend columns appear only when the term has weekend classes", () => {
   assert.deepEqual(timetableColumns(blocks), [1, 2, 3, 4, 5, 7]);
   assert.deepEqual(timetableWeekDays({ blocks, week: 10 }).map((day) => day.day), [1, 2, 3, 4, 5, 7]);
 });
+
+test("a course split over many rooms at one time takes one tile and lists the rooms", () => {
+  // 分级教学：同一个班的大学英语同一时间分在好几间教室。
+  const english: TimetableRow[] = ["E501", "E502", "D407", "B110"].map((room, index) => ({
+    courseName: "大学英语（一）",
+    teacher: ["王老师", "李老师", "赵老师", "钱老师"][index],
+    room,
+    weekday: "星期五",
+    periods: "3-4",
+    weeks: "4-19",
+    className: `英语${index + 1}班`,
+  }));
+  const { blocks } = timetableBlocks([...english, rows[0]]);
+  assert.deepEqual(blocks.map((block) => [block.day, block.course.name, block.sessions.length]), [
+    [1, "药物化学", 1],
+    [5, "大学英语（一）", 4],
+  ]);
+  const course = blocks[1].course;
+  assert.equal(course.location, "4 个教室");
+  assert.equal(course.teacher, undefined);
+  assert.equal(course.weeks, "4-19周");
+  assert.equal(course.slotNote, "分 4 个教室同时上：\nB110 · 钱老师\nD407 · 赵老师\nE501 · 王老师\nE502 · 李老师");
+
+  const friday = timetableWeekDays({ blocks, week: 7 })[4];
+  assert.deepEqual(friday.pieces.map((piece) => [piece.block.course.location, piece.lanes]), [["4 个教室", 1]]);
+  assert.equal(timetableWeekCourseCount(blocks, 7), 2);
+
+  const withClasses = timetableBlocks(english, { withClasses: true }).blocks[0].course.slotNote ?? "";
+  assert.ok(withClasses.includes("E501 · 王老师 · 英语1班"), withClasses);
+});
+
+test("a course that changes rooms mid-term shows the room of the week being viewed", () => {
+  const moved: TimetableRow[] = [
+    { courseName: "药理学", teacher: "周老师", room: "B211", weekday: "星期一", periods: "1-2", weeks: "1-8" },
+    { courseName: "药理学", teacher: "吴老师", room: "E104", weekday: "星期一", periods: "1-2", weeks: "9-16" },
+  ];
+  const { blocks } = timetableBlocks(moved);
+  assert.equal(blocks.length, 1);
+  assert.equal(blocks[0].course.location, "2 个教室");
+  const plan = "先后在 2 个教室上：\nB211 · 周老师 · 1-8周\nE104 · 吴老师 · 9-16周";
+  assert.equal(blocks[0].course.slotNote, plan);
+
+  const shown = (week: number) => timetableWeekDays({ blocks, week })[0].pieces.map((piece) => piece.block.course);
+  assert.deepEqual(shown(3).map((course) => [course.location, course.teacher, course.weeks, course.slotNote]), [
+    ["B211", "周老师", "1-16周", plan],
+  ]);
+  assert.deepEqual(shown(12).map((course) => [course.location, course.teacher]), [["E104", "吴老师"]]);
+  // 第 17 周不上：淡显时写全部安排。
+  const week17 = timetableWeekDays({ blocks, week: 17 })[0];
+  assert.deepEqual(week17.pieces, []);
+  assert.deepEqual((week17.offWeekPieces ?? []).map((piece) => piece.block.course.location), ["2 个教室"]);
+});
