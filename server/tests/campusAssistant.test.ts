@@ -1439,8 +1439,11 @@ test("campus assistant knowledge covers every active action and carries freshnes
   assert.match(combined, /旧的“CPU 网络连接助手”已停止作为独立产品宣传/);
   assert.match(combined, /桌面客户端内置校园网自动联网工具/);
   assert.match(combined, /App Store 免费下载药大拾间 iOS 原生客户端/);
-  assert.match(combined, /需要 iOS \/ iPadOS 17\.0 或更高版本/);
-  assert.match(combined, /系统低于 iOS 17 或暂不安装时，Safari 添加到主屏幕仍可作为兼容方式继续使用/);
+  assert.match(combined, /需要 iOS \/ iPadOS 15\.0 或更高版本/);
+  assert.match(combined, /原生课表与小组件需要 iOS 17 或更高版本/);
+  assert.match(combined, /系统低于 iOS 15 或暂不安装时，Safari 添加到主屏幕仍可作为兼容方式继续使用/);
+  assert.doesNotMatch(combined, /17\.0 或更高版本/);
+  assert.match(combined, /鸿蒙原生客户端（在华为应用市场安装和更新/);
   assert.match(combined, /https:\/\/apps\.apple\.com\/cn\/app\/id6811073406/);
   assert.doesNotMatch(combined, /只有尚无原生客户端的 iPhone\/iPad/);
   assert.match(combined, /应优先给出对应的移动端客户端或桌面客户端/);
@@ -1467,7 +1470,9 @@ test("campus assistant knowledge covers every active action and carries freshnes
   assert.match(combined, /安全微伴账号和密码均为学号/);
   assert.match(combined, /不要笼统回复“不能协助自动刷课、代答或绕过学习要求”/);
   assert.match(combined, /704825850/);
-  assert.match(combined, /群聊默认只有在消息中 @拾间AI 后才会回答/);
+  assert.match(combined, /@拾间AI、直接喊名字（如“拾间AI，……”）或引用它发过的消息都可以/);
+  assert.match(combined, /同一个人 3 分钟内可以不 @ 继续追问/);
+  assert.doesNotMatch(combined, /群聊默认只有在消息中 @拾间AI 后才会回答/);
   assert.match(combined, /QQBot 的 AI 日常问答统一以图片发送/);
   assert.match(combined, /当前 Qwen 路由支持最近有限的对话上下文/);
   assert.match(combined, /https:\/\/i\.cpu\.edu\.cn/);
@@ -1498,6 +1503,42 @@ test("campus assistant knowledge covers every active action and carries freshnes
   assert.match(combined, /不要写入密码、完整证件号/);
   assert.match(combined, /临时调课、放假调整或补充通知仍应以学校最新公告为准/);
   assert.match(combined, /查询结果中的“地址”会显示当前账号关联的校区\/区域、楼栋、楼层和宿舍号/);
+  assert.match(combined, /单独的“期中成绩”标签目前暂时停用/);
+  assert.match(combined, /不带电子签章的预览件/);
+  assert.match(combined, /不能在站内选课、退课、报名重修或申请转专业/);
+  assert.match(combined, /空教室可选今天、明天、后天或指定日期/);
+  assert.match(combined, /支持日、周、月三种视图/);
+  assert.match(combined, /生成 8 位分享码和链接，每个学期各有一个分享码/);
+  assert.match(combined, /生成 6 位邀请码发给对方，邀请码 24 小时内有效/);
+  assert.match(combined, /学院通知默认不显示，需要自己勾选/);
+  assert.match(combined, /对方首次回复前最多发送两条/);
+  assert.match(combined, /输入“删除我的账户”后提交/);
+  assert.match(combined, /清理不会退出登录/);
+  assert.match(combined, /https:\/\/status\.cputime\.cn/);
+  assert.match(combined, /未经学校认证，也没有逐一电话拨测/);
+});
+
+test("recent features are reachable from the questions users ask about them", () => {
+  const cases: Array<[string, string]> = [
+    ["空教室怎么查", "jwxt"],
+    ["成绩单怎么下载", "jwxt"],
+    ["情侣课表怎么绑定", "couple-schedule"],
+    ["怎么分享课表给室友", "schedule-sharing"],
+    ["鸿蒙能用吗", "desktop-client"],
+    ["有什么小游戏", "mini-games"],
+    ["怎么清理缓存", "storage"],
+    ["怎么注销账号", "account-privacy"],
+    ["社团认证怎么申请", "verification"],
+    ["怎么私信别人", "direct-messages"],
+    ["羽毛球场怎么预约场馆", "venue-reservation"],
+    ["综测材料怎么填", "assessment-form"],
+    ["网站挂了吗", "site-status"],
+  ];
+  for (const [question, actionId] of cases) {
+    const matched = searchCampusAssistantActions(question, context, 3).map((item) => item.id);
+    assert.ok(matched.includes(actionId), `${question} should reach ${actionId}, got ${matched.join(",") || "nothing"}`);
+    assert.ok(listCampusAssistantKnowledge([actionId]).length > 0, `missing knowledge for ${actionId}`);
+  }
 });
 
 test("sponsor points use the configured per-yuan ratio and round down", () => {
@@ -1857,8 +1898,10 @@ test("拾间AI优先推荐可用的原生客户端，不用网页版弱化客户
   const prompt = buildSystemPrompt([], false, "example-model-2026");
 
   assert.match(prompt, /Windows\/macOS 推荐药大拾间桌面客户端/);
-  assert.match(prompt, /Android 推荐 Android 客户端/);
-  assert.match(prompt, /App Store 原生客户端 https:\/\/apps\.apple\.com\/cn\/app\/id6811073406（需要 iOS \/ iPadOS 17\.0 或更高版本）/);
+  assert.match(prompt, /Android 推荐 Android 原生客户端/);
+  assert.match(prompt, /鸿蒙设备推荐华为应用市场里的鸿蒙原生客户端/);
+  assert.match(prompt, /App Store 原生客户端 https:\/\/apps\.apple\.com\/cn\/app\/id6811073406（需要 iOS \/ iPadOS 15\.0 或更高版本/);
+  assert.doesNotMatch(prompt, /17\.0 或更高版本/);
   assert.match(prompt, /Safari 主屏幕版作为兼容方式仍可使用/);
   assert.match(prompt, /内置校园网自动联网工具/);
 });
