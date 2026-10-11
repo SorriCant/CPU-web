@@ -184,7 +184,7 @@
             <button data-cpu-button="surface" v-if="!isLoggedIn" type="button" @click="goToLogin">登录</button>
             <b v-else class="cloud-online">已连接</b>
           </div>
-          <p>玩法：每碗面有切番茄、打鸡蛋、炒鸡蛋、炒番茄、煮面条、调味六道工序。指针越靠近亮区中心得分越高，整碗没有失误还有出锅加分；失误三次收摊，全程完美的一碗能补回一次机会。炒和煮的火候条越走越快；出餐越多，整体节奏也越快。</p>
+          <p>玩法：每碗面有切番茄、打鸡蛋、炒鸡蛋、炒番茄、煮面条、调味六道工序。指针越靠近亮区中心得分越高，整碗没有失误还有出锅加分；失误三次收摊，全程完美的一碗能补回一次机会。炒和煮的火候条越走越快。第二碗起每道工序快慢不一，指针还可能从另一头出发；亮区一碗比一碗窄，节奏一碗比一碗快。</p>
           <p>操作：点击 / 触摸 / 空格 下手，P 暂停，Esc 返回主页。</p>
         </div>
       </section>
@@ -212,11 +212,13 @@ import {
   noodleGaugePosition,
   noodleGrade,
   noodleGradePoints,
+  noodleStepVariation,
   noodleTargetCenter,
   noodleZones,
   TOMATO_NOODLE_RULES as NOODLE_RULES,
   TOMATO_NOODLE_STEPS as NOODLE_STEPS,
   type NoodleGrade,
+  type NoodleStepVariation,
 } from "./tomatoNoodleRules";
 import { drawNoodleBowl, drawNoodleScene } from "./tomatoNoodleScene";
 
@@ -264,6 +266,7 @@ let worldHeight = 680;
 let stepPhase: StepPhase = "intro";
 let phaseSeconds = 0;
 let gaugePosition = 0;
+let stepVariation: NoodleStepVariation = { tempo: 1, reverse: false };
 let stepGrade: NoodleGrade | null = null;
 let bowlStars = 0;
 let elapsed = 0;
@@ -398,10 +401,11 @@ function beginStep(index: number) {
   stepIndex.value = index;
   if (index === 0) stepGrades.value = [];
   target.value = noodleTargetCenter(NOODLE_STEPS[index], Math.random());
+  stepVariation = noodleStepVariation(NOODLE_STEPS[index], bowls.value, Math.random(), Math.random());
   serving.value = false;
   stepPhase = "intro";
   phaseSeconds = 0;
-  gaugePosition = 0;
+  gaugePosition = stepVariation.reverse ? 1 : 0;
   stepGrade = null;
   feedback.value = null;
 }
@@ -514,7 +518,7 @@ function updateGame(delta: number) {
       phaseSeconds = 0;
     }
   } else if (stepPhase === "active") {
-    const gauge = noodleGaugePosition(currentStep.value, bowls.value, phaseSeconds);
+    const gauge = noodleGaugePosition(currentStep.value, bowls.value, phaseSeconds, stepVariation);
     gaugePosition = gauge.position;
     if (gauge.expired) judge("miss");
   } else if (stepPhase === "result") {

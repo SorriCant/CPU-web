@@ -36,7 +36,8 @@ export const TOMATO_NOODLE_ACHIEVEMENTS: readonly TomatoNoodleAchievementDefinit
   { code: "bowls_10", title: "面馆老板", description: "单局端出 10 碗面", icon: "🧑‍🍳", metric: "bestBowls", target: 10 },
   { code: "score_50", title: "色香味俱全", description: "单局达到 50 分", icon: "✨", metric: "bestScore", target: 50 },
   { code: "score_120", title: "一勺定乾坤", description: "单局达到 120 分", icon: "🔥", metric: "bestScore", target: 120 },
-  { code: "score_220", title: "厨神降临", description: "单局达到 220 分", icon: "🏆", metric: "bestScore", target: 220 },
+  // 代号沿用最初的 220 分门槛：已有玩家解锁过，改代号会让他们的记录失效。
+  { code: "score_220", title: "厨神降临", description: "单局达到 180 分", icon: "🏆", metric: "bestScore", target: 180 },
   { code: "games_5", title: "回头客", description: "完成 5 局云端对局", icon: "🪑", metric: "games", target: 5 },
   { code: "games_20", title: "深夜食堂", description: "完成 20 局云端对局", icon: "🌙", metric: "games", target: 20 },
   { code: "games_50", title: "颠勺不息", description: "完成 50 局云端对局", icon: "💪", metric: "games", target: 50 },

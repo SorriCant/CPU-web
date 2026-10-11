@@ -26,21 +26,25 @@ export const TOMATO_NOODLE_RULES = {
   stepResultMs: 650,
   serveMs: 900,
   sweepPasses: 4,
-  sweepSecondsBase: 1.25,
-  sweepSecondsDecay: 0.89,
-  sweepSecondsMin: 0.5,
-  fillSecondsBase: 2.3,
-  fillSecondsDecay: 0.91,
-  fillSecondsMin: 1,
+  sweepSecondsBase: 1.15,
+  sweepSecondsDecay: 0.87,
+  sweepSecondsMin: 0.42,
+  fillSecondsBase: 2.1,
+  fillSecondsDecay: 0.88,
+  fillSecondsMin: 0.85,
   // 火候条越烧越快：位置 = 进度的 fillCurve 次方，前段给出预判时间，临近目标时最急。
   fillCurve: 1.8,
-  zoneDecay: 0.94,
-  perfectHalf: 0.04,
-  perfectHalfMin: 0.02,
-  goodHalf: 0.09,
-  goodHalfMin: 0.04,
-  okHalf: 0.15,
-  okHalfMin: 0.07,
+  // 第二碗起每道工序的快慢在这个倍率范围里随机，往复条还会随机从另一头出发，节奏背不下来。
+  tempoMin: 0.85,
+  tempoMax: 1.2,
+  // 亮区每碗收窄一成，下限窄到几乎点不中：一局总会结束。
+  zoneDecay: 0.9,
+  perfectHalf: 0.035,
+  perfectHalfMin: 0.012,
+  goodHalf: 0.075,
+  goodHalfMin: 0.025,
+  okHalf: 0.125,
+  okHalfMin: 0.04,
   perfectPoints: 3,
   goodPoints: 2,
   okPoints: 1,
@@ -158,19 +162,42 @@ export function noodleTargetCenter(step: NoodleStep, random: number) {
   return step.targetMin + unitInterval(random) * (step.targetMax - step.targetMin);
 }
 
+export interface NoodleStepVariation {
+  /** 这道工序的速度倍率。 */
+  tempo: number;
+  /** 往复条从右端出发。 */
+  reverse: boolean;
+}
+
+/** 第一碗按标准节奏教学；之后每道工序的快慢和往复条的出发方向都随机。 */
+export function noodleStepVariation(step: NoodleStep, level: number, tempoRandom: number, sideRandom: number): NoodleStepVariation {
+  if (level <= 0) return { tempo: 1, reverse: false };
+  const rules = TOMATO_NOODLE_RULES;
+  return {
+    tempo: rules.tempoMin + unitInterval(tempoRandom) * (rules.tempoMax - rules.tempoMin),
+    reverse: step.gauge === "sweep" && sideRandom < 0.5,
+  };
+}
+
 /**
  * 指针位置。返回 expired 表示这道工序没等到操作：往复条走满来回，或火候条烧到头。
  */
-export function noodleGaugePosition(step: NoodleStep, level: number, seconds: number) {
-  const elapsed = Math.max(0, seconds);
+export function noodleGaugePosition(
+  step: NoodleStep,
+  level: number,
+  seconds: number,
+  variation: NoodleStepVariation = { tempo: 1, reverse: false },
+) {
+  const elapsed = Math.max(0, seconds) * variation.tempo;
   if (step.gauge === "fill") {
     const progress = Math.min(1, elapsed / noodleFillSeconds(level));
     return { position: progress ** TOMATO_NOODLE_RULES.fillCurve, expired: progress >= 1 };
   }
   const passes = elapsed / noodleSweepSeconds(level);
   const phase = passes % 2;
+  const position = phase <= 1 ? phase : 2 - phase;
   return {
-    position: phase <= 1 ? phase : 2 - phase,
+    position: variation.reverse ? 1 - position : position,
     expired: passes >= TOMATO_NOODLE_RULES.sweepPasses,
   };
 }
@@ -207,7 +234,7 @@ export function noodleBowlRating(points: number) {
 }
 
 export function noodleChefRank(score: number) {
-  if (score >= 220) return "厨神";
+  if (score >= 180) return "厨神";
   if (score >= 120) return "金牌主厨";
   if (score >= 50) return "熟练掌勺";
   if (score >= 15) return "厨房新秀";

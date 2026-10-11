@@ -19,6 +19,7 @@ import {
   noodleGaugePosition,
   noodleGrade,
   noodleGradePoints,
+  noodleStepVariation,
   noodleSweepSeconds,
   noodleTargetCenter,
   noodleZones,
@@ -31,6 +32,7 @@ import {
 } from "../../web/src/views/services/games/tomatoNoodleRules";
 
 const step = (id: string) => TOMATO_NOODLE_STEPS.find((item) => item.id === id)!;
+const near = (actual: number, expected: number, tolerance = 1e-9) => assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} ≈ ${expected}`);
 
 test("番茄鸡蛋面按固定六道工序做完一碗", () => {
   assert.deepEqual(
@@ -40,28 +42,52 @@ test("番茄鸡蛋面按固定六道工序做完一碗", () => {
   assert.equal(TOMATO_NOODLE_STEPS_PER_BOWL, 6);
   for (const item of TOMATO_NOODLE_STEPS) {
     assert.ok(item.targetMin < item.targetMax, item.id);
-    // 工序一开始指针在 0，目标区的最外沿必须离开起点，否则进场就点也能得分。
+    // 工序一开始指针在端点（往复条可能从右端出发），目标区的最外沿必须离开起点，否则进场就点也能得分。
     assert.ok(item.targetMin - TOMATO_NOODLE_RULES.okHalf > 0.05, item.id);
-    assert.ok(item.targetMax + TOMATO_NOODLE_RULES.okHalf < 1, item.id);
+    assert.ok(item.targetMax + TOMATO_NOODLE_RULES.okHalf < (item.gauge === "sweep" ? 0.95 : 1), item.id);
   }
 });
 
 test("往复条来回摆动并在走满来回后判定超时", () => {
   const cut = step("cut");
   const pass = noodleSweepSeconds(0);
-  assert.equal(pass, 1.25);
+  assert.equal(pass, 1.15);
   assert.deepEqual(noodleGaugePosition(cut, 0, 0), { position: 0, expired: false });
-  assert.equal(noodleGaugePosition(cut, 0, pass / 2).position, 0.5);
-  assert.equal(noodleGaugePosition(cut, 0, pass).position, 1);
-  assert.equal(noodleGaugePosition(cut, 0, pass * 1.5).position, 0.5);
+  near(noodleGaugePosition(cut, 0, pass / 2).position, 0.5);
+  near(noodleGaugePosition(cut, 0, pass).position, 1);
+  near(noodleGaugePosition(cut, 0, pass * 1.5).position, 0.5);
   assert.equal(noodleGaugePosition(cut, 0, pass * 3.9).expired, false);
-  assert.equal(noodleGaugePosition(cut, 0, pass * 4).expired, true);
+  assert.equal(noodleGaugePosition(cut, 0, pass * 4.01).expired, true);
+});
+
+test("第二碗起每道工序快慢不一，往复条可能从另一头出发", () => {
+  const cut = step("cut");
+  const boil = step("boil");
+  // 第一碗保持标准节奏，方便上手。
+  assert.deepEqual(noodleStepVariation(cut, 0, 0.9, 0.1), { tempo: 1, reverse: false });
+  assert.deepEqual(noodleStepVariation(cut, 1, 0, 0.1), { tempo: TOMATO_NOODLE_RULES.tempoMin, reverse: true });
+  assert.deepEqual(noodleStepVariation(cut, 1, 1, 0.9), { tempo: TOMATO_NOODLE_RULES.tempoMax, reverse: false });
+  // 火候条只会从生到熟，不反向。
+  assert.equal(noodleStepVariation(boil, 3, 0.5, 0.1).reverse, false);
+  assert.ok(TOMATO_NOODLE_RULES.tempoMin < 1 && TOMATO_NOODLE_RULES.tempoMax > 1);
+
+  const pass = noodleSweepSeconds(1);
+  const reversed = { tempo: 1, reverse: true };
+  assert.deepEqual(noodleGaugePosition(cut, 1, 0, reversed), { position: 1, expired: false });
+  near(noodleGaugePosition(cut, 1, pass * 0.25, reversed).position, 0.75);
+  near(noodleGaugePosition(cut, 1, pass, reversed).position, 0);
+  // 倍率只改变走得多快，不改变走位。
+  const fast = { tempo: 1.2, reverse: false };
+  near(noodleGaugePosition(cut, 1, pass * 0.5 / 1.2, fast).position, 0.5);
+  near(noodleGaugePosition(boil, 1, 0.4 / 1.2, fast).position, noodleGaugePosition(boil, 1, 0.4).position);
+  assert.equal(noodleGaugePosition(cut, 1, pass * 3.9 / 1.2, fast).expired, false);
+  assert.equal(noodleGaugePosition(cut, 1, pass * 4.01 / 1.2, fast).expired, true);
 });
 
 test("火候条只走一遍、越烧越快，烧到头即失误", () => {
   const boil = step("boil");
   const total = noodleFillSeconds(0);
-  assert.equal(total, 2.3);
+  assert.equal(total, 2.1);
   assert.equal(noodleGaugePosition(boil, 0, 0).position, 0);
   // 走到一半时间时指针还不到三成，后半程明显更急。
   const half = noodleGaugePosition(boil, 0, total / 2).position;
@@ -78,17 +104,28 @@ test("开局的判定窗口按指针速度折算在可反应的范围内", () =>
   const zones = noodleZones(0);
   const sweepSpeed = 1 / noodleSweepSeconds(0);
   const windowMs = (half: number, speed: number) => Math.round((half * 2 / speed) * 1000);
-  assert.equal(windowMs(zones.perfect, sweepSpeed), 100);
-  assert.equal(windowMs(zones.good, sweepSpeed), 225);
-  assert.equal(windowMs(zones.ok, sweepSpeed), 375);
+  near(windowMs(zones.perfect, sweepSpeed), 80.5, 1);
+  near(windowMs(zones.good, sweepSpeed), 172.5, 1);
+  near(windowMs(zones.ok, sweepSpeed), 287.5, 1);
   const boil = step("boil");
   const center = (boil.targetMin + boil.targetMax) / 2;
   const at = center ** (1 / TOMATO_NOODLE_RULES.fillCurve) * noodleFillSeconds(0);
   const fillSpeed = (noodleGaugePosition(boil, 0, at + 0.001).position - noodleGaugePosition(boil, 0, at - 0.001).position) / 0.002;
   assert.ok(windowMs(zones.perfect, fillSpeed) > 90 && windowMs(zones.perfect, fillSpeed) < 140);
-  assert.ok(windowMs(zones.ok, fillSpeed) > 350 && windowMs(zones.ok, fillSpeed) < 500);
-  // 第七碗起，往复条的“还行”窗口已经压到 0.15 秒以内。
-  assert.ok(windowMs(noodleZones(6).ok, 1 / noodleSweepSeconds(6)) < 150);
+  assert.ok(windowMs(zones.ok, fillSpeed) > 280 && windowMs(zones.ok, fillSpeed) < 400);
+});
+
+test("判定窗口每碗收窄两成多，不留能一直撑下去的下限", () => {
+  const okWindowMs = (level: number) => noodleZones(level).ok * 2 * noodleSweepSeconds(level) * 1000;
+  for (let level = 0; level < 6; level += 1) {
+    const ratio = okWindowMs(level + 1) / okWindowMs(level);
+    assert.ok(ratio > 0.75 && ratio < 0.82, `第 ${level + 2} 碗 ${ratio}`);
+  }
+  // 第四碗的“还行”窗口已不足 0.15 秒，第七碗不足 0.07 秒。
+  assert.ok(okWindowMs(3) < 150);
+  assert.ok(okWindowMs(6) < 70);
+  // 封顶之后不到 0.04 秒，没有人能无限打下去。
+  assert.ok(okWindowMs(200) < 40);
 });
 
 test("出餐越多节奏越快、判定越窄，并且有下限", () => {
@@ -173,6 +210,8 @@ test("云端成就覆盖局数、单局分数、单局碗数与累计", () => {
   for (const code of ["bowls_10", "score_220", "games_50", "total_bowls_100", "total_score_1000"]) assert.ok(!codes.includes(code), code);
   assert.deepEqual(earnedTomatoNoodleAchievementCodes({ games: 0, bestScore: 0, totalScore: 0, bestBowls: 0, totalBowls: 0 }), []);
   assert.equal(TOMATO_NOODLE_ACHIEVEMENTS.length, 14);
+  // 最高一档的门槛降到 180 分，代号不变，已解锁的记录继续有效。
+  assert.equal(TOMATO_NOODLE_ACHIEVEMENTS.find((item) => item.code === "score_220")?.target, 180);
   assert.equal(new Set(TOMATO_NOODLE_ACHIEVEMENTS.map((item) => item.code)).size, 14);
 });
 
