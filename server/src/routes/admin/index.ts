@@ -141,6 +141,9 @@ import {
   updateJwxtAgentRuntimeConfig,
 } from "../../services/jwxtAgentConfig";
 import { getJwxtAgentState, requestJwxtAgent } from "../../services/jwxtAgentGateway";
+import { JWXT_AGENT_FEATURES } from "../../services/jwxtAgentProtocol";
+import { normalizeAgentUpdateReport } from "../../services/agentUpdateStatus";
+import { readServerBuildCommit, recordAgentUpdateRequest, resolveAgentUpdate } from "../../services/agentUpdateTracker";
 import { getQueryAgentPoolSnapshot } from "../../services/jwxtAgentRemote";
 import { getSsoLoginPoolSnapshot } from "../../services/ssoLoginPool";
 import { resetCampusAssistantDailyUsage } from "../../services/campusAssistantQuota";
@@ -271,14 +274,19 @@ const jwxtAgentConfigSchema = z.object({
   }).strict()).max(100),
 }).strict();
 
-function jwxtAgentAdminSnapshot() {
+async function jwxtAgentAdminSnapshot() {
   const runtime = getJwxtAgentRuntimeConfig();
+  const updates = new Map(await Promise.all(runtime.agents.map(async (agent) => (
+    [agent.id, await resolveAgentUpdate(agent.id, getJwxtAgentState(agent.id))] as const
+  ))));
   const queryPoolById = new Map(getQueryAgentPoolSnapshot().map((item) => [item.id, item]));
   const loginPool = getSsoLoginPoolSnapshot();
   const loginPoolById = new Map(loginPool.nodes.map((item) => [item.id, item]));
   return {
     source: getJwxtAgentConfigSource(),
     agentPath: config.jwxtAgentPath,
+    serverCommit: readServerBuildCommit(),
+    knownFeatures: JWXT_AGENT_FEATURES,
     localJwxtEnabled: runtime.localJwxtEnabled,
     localJwxtWeight: runtime.localJwxtWeight,
     crawlAgentId: runtime.crawlAgentId,
@@ -294,20 +302,21 @@ function jwxtAgentAdminSnapshot() {
       replicaIdentityPinned: Boolean(replicaPublicKey),
       replicaKeyFingerprint: jwxtAgentReplicaKeyFingerprint(replicaPublicKey),
       connection: getJwxtAgentState(agent.id),
+      update: updates.get(agent.id) ?? { status: "none" as const },
       pool: queryPoolById.get(agent.id) ?? null,
       loginPool: loginPoolById.get(agent.id) ?? null,
     })),
   };
 }
 
-adminRouter.get("/jwxt-agents", adminOnly, (_req, res) => {
-  ok(res, jwxtAgentAdminSnapshot());
+adminRouter.get("/jwxt-agents", adminOnly, async (_req, res, next) => {
+  try { ok(res, await jwxtAgentAdminSnapshot()); } catch (error) { next(error); }
 });
 
 adminRouter.patch("/jwxt-agents", adminOnly, validate(jwxtAgentConfigSchema), async (req, res, next) => {
   try {
     await updateJwxtAgentRuntimeConfig(req.body);
-    ok(res, jwxtAgentAdminSnapshot());
+    ok(res, await jwxtAgentAdminSnapshot());
   } catch (error) {
     next(Errors.badRequest(error instanceof Error ? error.message : "教务 Agent 配置无效"));
   }
@@ -320,7 +329,7 @@ adminRouter.post("/jwxt-agents/generate-token", adminOnly, (_req, res) => {
 adminRouter.post("/jwxt-agents/:agentId/reset-identity", adminOnly, async (req, res, next) => {
   try {
     await resetJwxtAgentReplicaPublicKey(String(req.params.agentId || ""));
-    ok(res, jwxtAgentAdminSnapshot());
+    ok(res, await jwxtAgentAdminSnapshot());
   } catch (error) {
     next(Errors.badRequest(error instanceof Error ? error.message : "Agent 加密身份重置失败"));
   }
@@ -332,7 +341,35 @@ adminRouter.post("/jwxt-agents/:agentId/update", adminOnly, async (req, res, nex
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(agentId)) {
       throw Errors.badRequest("Agent ID 无效");
     }
-    ok(res, await requestJwxtAgent(agentId, "agent.update", {}, 10_000));
+    const fromCommit = getJwxtAgentState(agentId).buildCommit;
+    const result = await requestJwxtAgent(agentId, "agent.update", {}, 10_000);
+    await recordAgentUpdateRequest({
+      agentId,
+      fromCommit,
+      agentRequestedAt: result.requestedAt,
+      alreadyScheduled: result.alreadyScheduled,
+    });
+    ok(res, { ...result, update: await resolveAgentUpdate(agentId, getJwxtAgentState(agentId)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/** 后台在更新进行中轮询：问一次节点更新器的进度，返回这次更新目前的结论。 */
+adminRouter.get("/jwxt-agents/:agentId/update-status", adminOnly, async (req, res, next) => {
+  try {
+    const agentId = String(req.params.agentId || "");
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(agentId)) {
+      throw Errors.badRequest("Agent ID 无效");
+    }
+    const connection = getJwxtAgentState(agentId);
+    let polled = null;
+    if (connection.ready && connection.features?.includes("agent.update-status")) {
+      try {
+        polled = normalizeAgentUpdateReport(await requestJwxtAgent(agentId, "agent.update-status", {}, 5_000));
+      } catch { /* 节点正在重启或忙，沿用上一次的说法 */ }
+    }
+    ok(res, { connection, update: await resolveAgentUpdate(agentId, connection, polled) });
   } catch (error) {
     next(error);
   }

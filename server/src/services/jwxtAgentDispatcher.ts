@@ -5,6 +5,7 @@ import { crawlSchoolFeedSource, fetchSchoolFeedDetails, SCHOOL_FEED_DETAIL_BATCH
 import { PORTAL_NOTICE_MAX_PAGE_SIZE } from "./portalNotices";
 import { queryDormElectricFromCampus } from "./dormElectricCampus";
 import { scheduleAgentSelfUpdate } from "./agentSelfUpdate";
+import { readAgentUpdateReport } from "./agentUpdateStatus";
 import type { JwxtAgentAction } from "./jwxtAgentProtocol";
 import { I_SERVICE_ICON_PATH_PATTERN } from "./jwxtClient";
 import { jwxtRecordsArgsSchema } from "./jwxtRecords";
@@ -134,6 +135,9 @@ export async function dispatchJwxtAgentAction(action: JwxtAgentAction, payload: 
       }).strict().parse(payload);
       return queryDormElectricFromCampus(input.studentNo);
     }
+    case "agent.update-status":
+      emptySchema.parse(payload);
+      return readAgentUpdateReport();
     case "agent.update":
       emptySchema.parse(payload);
       return scheduleAgentSelfUpdate();

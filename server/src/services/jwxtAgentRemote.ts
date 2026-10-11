@@ -147,7 +147,14 @@ export function getPyfa(token: string): ReturnType<typeof local.getPyfa> {
 }
 
 export function getRecords(token: string, args: Parameters<typeof local.getRecords>[1]): ReturnType<typeof local.getRecords> {
-  return requestWithToken(token, "jwxt.records", (innerToken) => ({ token: innerToken, ...args })) as ReturnType<typeof local.getRecords>;
+  return requestWithToken(token, "jwxt.records", (innerToken) => ({ token: innerToken, ...args }))
+    .catch((error) => {
+      // 会话所在的节点还没更新到认识这个动作的版本：说清楚原因，不把内部报错丢给用户。
+      if (error instanceof HttpError && /不支持该教务操作/.test(error.message)) {
+        throw new HttpError(503, 5003, "承载你教务会话的节点还没有更新，暂时读不了这项数据，请稍后再试");
+      }
+      throw error;
+    }) as ReturnType<typeof local.getRecords>;
 }
 
 export function getPortalNotices(token: string, args?: Parameters<typeof local.getPortalNotices>[1]): ReturnType<typeof local.getPortalNotices> {

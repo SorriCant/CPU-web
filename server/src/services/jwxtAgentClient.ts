@@ -2,6 +2,8 @@ import { ZodError } from "zod";
 import { HttpError } from "../utils/response";
 import { AgentErrorCode } from "./jwxtAgentErrors";
 import { dispatchJwxtAgentAction } from "./jwxtAgentDispatcher";
+import { readAgentUpdateReport } from "./agentUpdateStatus";
+import { JWXT_AGENT_FEATURES } from "./jwxtAgentProtocol";
 import {
   JWXT_AGENT_PROTOCOL_VERSION,
   jwxtActionSessionToken,
@@ -131,6 +133,9 @@ export function startJwxtAgentClient(options: JwxtAgentClientOptions): JwxtAgent
         buildCommit: options.buildCommit,
         platform: process.platform,
         replicaBackfill: true,
+        features: JWXT_AGENT_FEATURES,
+        // 重启后第一时间把上一次更新的结果带回去，后台不用再猜这次更新成没成。
+        lastUpdate: readAgentUpdateReport(),
       }));
       log(`[jwxt-agent] 已注册上线: ${String(message.agent?.name || options.agentId)}`);
       resolveReadyWaiters();

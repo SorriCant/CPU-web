@@ -3,9 +3,17 @@ import type { JwxtSessionSnapshot, LoginHandoffAttempt, LoginSessionHandoff } fr
 import type { CrawlSchoolFeedResult, SchoolFeedDetail, SchoolFeedSourceInput } from "./schoolCrawlerCore";
 import type { DormElectricResult } from "./dormElectricCampus";
 import type { AgentEncryptedLoginCredentials, AgentEncryptedSessionReplica, AgentReplicaRecipient } from "./jwxtAgentReplicaCrypto";
+import type { AgentUpdateReport } from "./agentUpdateStatus";
 
 // 会话快照是 v1 上的可选扩展字段，保持协议号不变以支持主服务与 Agent 滚动升级。
 export const JWXT_AGENT_PROTOCOL_VERSION = 2;
+
+/**
+ * 协议号不变的前提下后加的动作。Agent 在握手时报出自己认得哪些，
+ * 主服务据此在后台标出“这个节点还不支持什么”，而不是等用户撞上报错。
+ */
+export const JWXT_AGENT_FEATURES = ["jwxt.records", "agent.update-status"] as const;
+export type JwxtAgentFeature = typeof JWXT_AGENT_FEATURES[number];
 
 export type JwxtAgentActionMap = {
   "login.begin": {
@@ -106,6 +114,10 @@ export type JwxtAgentActionMap = {
     input: { studentNo: string };
     output: DormElectricResult;
   };
+  "agent.update-status": {
+    input: Record<string, never>;
+    output: AgentUpdateReport;
+  };
   "agent.update": {
     input: Record<string, never>;
     output: {
@@ -140,6 +152,8 @@ export type JwxtAgentReadyMessage = {
   buildCommit?: string;
   platform?: string;
   replicaBackfill?: boolean;
+  features?: string[];
+  lastUpdate?: AgentUpdateReport;
 };
 
 export type JwxtAgentReplicaTargetsMessage = {

@@ -1061,6 +1061,22 @@ export type JwxtAgentConnection = {
   lastPongAt: number | null;
   jwxtEnabled: boolean;
   crawlEnabled: boolean;
+  /** 节点握手时上报的构建提交；旧版本或开发环境为空。 */
+  buildCommit?: string;
+  platform?: string;
+  /** 节点认得的后加动作；经旧版网关转发时没有这一项。 */
+  features?: string[];
+};
+
+export type JwxtAgentUpdateView = {
+  status: "none" | "pending" | "succeeded" | "current" | "unchanged" | "failed" | "timeout";
+  requestedAt?: number;
+  finishedAt?: number;
+  fromCommit?: string;
+  toCommit?: string;
+  step?: "queued" | "preparing" | "switching" | "restarting" | "reconnected";
+  message?: string;
+  rolledBack?: boolean;
 };
 
 export type WechatServiceConfig = {
@@ -1114,6 +1130,7 @@ export type JwxtAgentAdminItem = {
   replicaIdentityPinned: boolean;
   replicaKeyFingerprint: string;
   connection: JwxtAgentConnection;
+  update?: JwxtAgentUpdateView;
   pool: null | {
     id: string;
     name: string;
@@ -1141,6 +1158,9 @@ export type JwxtLoginPoolNode = {
 export type JwxtAgentsAdminConfig = {
   source: "environment" | "database";
   agentPath: string;
+  /** 主站自己的构建提交，用来对照各节点。 */
+  serverCommit?: string;
+  knownFeatures?: string[];
   localJwxtEnabled: boolean;
   localJwxtWeight: number;
   crawlAgentId: string;
@@ -1250,6 +1270,12 @@ export type JwxtAgentUpdateResult = {
   accepted: true;
   alreadyScheduled: boolean;
   requestedAt: string;
+  update?: JwxtAgentUpdateView;
+};
+
+export type JwxtAgentUpdateStatus = {
+  connection: JwxtAgentConnection;
+  update: JwxtAgentUpdateView;
 };
 
 export type AdminDeploymentStatus = {
@@ -1309,6 +1335,8 @@ export const adminApi = {
     request.post<JwxtAgentsAdminConfig>(`/admin/jwxt-agents/${encodeURIComponent(agentId)}/reset-identity`, {}),
   updateJwxtAgent: (agentId: string) =>
     request.post<JwxtAgentUpdateResult>(`/admin/jwxt-agents/${encodeURIComponent(agentId)}/update`, {}),
+  jwxtAgentUpdateStatus: (agentId: string, options?: RequestOptions) =>
+    request.get<JwxtAgentUpdateStatus>(`/admin/jwxt-agents/${encodeURIComponent(agentId)}/update-status`, undefined, options),
   previewScheduleHolidays: (academicYear: number) =>
     request.post<{ startDate: string; endDate: string; sources: string[]; warnings: string[]; adjustments: ScheduleTermConfig['adjustments'] }>('/admin/schedule-terms/holiday-preview', { academicYear }, { timeout: 30000 }),
   scheduleTerms: (options?: RequestOptions) =>

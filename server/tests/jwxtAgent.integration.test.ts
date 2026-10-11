@@ -211,6 +211,9 @@ test("outbound JWXT Agent handles login, queries, dorm electricity, and crawler 
   assert.equal(gateway.getJwxtAgentState("campus-agent-a").ready, true);
   assert.equal(gateway.getJwxtAgentState("campus-agent-a").buildCommit, "a".repeat(40));
   assert.equal(gateway.getJwxtAgentState("campus-agent-a").platform, process.platform);
+  // 握手带上节点认得的后加动作和上一次更新的结果，后台据此显示版本能力和更新结论。
+  assert.deepEqual(gateway.getJwxtAgentState("campus-agent-a").features, ["jwxt.records", "agent.update-status"]);
+  assert.equal(typeof gateway.getJwxtAgentState("campus-agent-a").lastUpdate?.phase, "string");
   assert.equal(gateway.getJwxtAgentState("campus-agent-b").buildCommit, "");
 
   const duplicateLogs: string[] = [];

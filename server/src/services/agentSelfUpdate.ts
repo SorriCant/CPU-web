@@ -28,7 +28,7 @@ export function queueManagedAgentUpdate(requestFile: string, now = Date.now()) {
   return { accepted: true as const, alreadyScheduled: false, requestedAt };
 }
 
-function findRepositoryRoot() {
+export function findAgentRepositoryRoot() {
   const starts = [
     process.cwd(),
     path.resolve(__dirname, "..", ".."),
@@ -56,7 +56,7 @@ export function scheduleAgentSelfUpdate() {
     return queueManagedAgentUpdate(managedRequestFile);
   }
   const requestedAt = new Date().toISOString();
-  const repositoryRoot = findRepositoryRoot();
+  const repositoryRoot = findAgentRepositoryRoot();
   const runnerPath = path.resolve(__dirname, "..", "agentUpdateRunner.js");
   if (!existsSync(runnerPath)) {
     throw new Error(`缺少 Agent 更新执行器: ${runnerPath}`);

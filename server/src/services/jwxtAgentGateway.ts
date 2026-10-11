@@ -15,6 +15,7 @@ import {
 import { getJwxtAgentRuntimeConfig, onJwxtAgentConfigChange, pinJwxtAgentReplicaPublicKey } from "./jwxtAgentConfig";
 import { deleteJwxtSessionReplica, loadJwxtSessionReplica, saveJwxtSessionReplica } from "./jwxtSessionReplica";
 import { AgentErrorCode } from "./jwxtAgentErrors";
+import { normalizeAgentUpdateReport, type AgentUpdateReport } from "./agentUpdateStatus";
 import { startJwxtReplicaBackfill } from "./jwxtReplicaBackfill";
 import {
   loadOrCreateAgentReplicaIdentity,
@@ -48,6 +49,8 @@ type AgentSession = {
   buildCommit?: string;
   platform?: string;
   replicaBackfill?: boolean;
+  features?: string[];
+  lastUpdate?: AgentUpdateReport | null;
 };
 
 const sessions = new Map<string, AgentSession>();
@@ -161,6 +164,8 @@ export function getJwxtAgentState(agentId: string) {
     buildCommit: session?.buildCommit ?? "",
     platform: session?.platform ?? "",
     replicaBackfill: Boolean(session?.replicaBackfill),
+    features: session?.features ?? [],
+    lastUpdate: session?.lastUpdate ?? null,
     jwxtEnabled: Boolean(agent?.enabled && agent.jwxtEnabled),
     crawlEnabled: Boolean(agent?.enabled && agent.crawlEnabled),
   };
@@ -330,6 +335,10 @@ async function handleAgentMessage(session: AgentSession, text: string) {
       ? message.buildCommit : "";
     session.platform = ["linux", "win32", "darwin"].includes(message.platform) ? message.platform : "";
     session.replicaBackfill = message.replicaBackfill === true;
+    session.features = Array.isArray(message.features)
+      ? message.features.filter((item: unknown): item is string => typeof item === "string" && /^[a-z][a-z.-]{0,39}$/.test(item)).slice(0, 32)
+      : [];
+    session.lastUpdate = normalizeAgentUpdateReport(message.lastUpdate);
     session.ready = true;
     broadcastReplicaTargets();
     return;

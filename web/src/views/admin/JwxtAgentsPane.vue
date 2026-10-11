@@ -76,6 +76,11 @@
       <div>
         <h3>远程 Agent</h3>
         <span>{{ onlineCount }} / {{ form.agents.length }} 在线</span>
+        <span v-if="serverCommit" class="version-summary">
+          · 主站版本 <code :title="serverCommit">{{ shortCommit(serverCommit) }}</code>
+          <template v-if="differingCount"> · {{ differingCount }} 个在线节点版本不同</template>
+          <template v-else-if="onlineCount"> · 在线节点都与主站同版本</template>
+        </span>
       </div>
       <el-button type="primary" plain @click="openAdd">添加 Agent</el-button>
     </div>
@@ -152,6 +157,25 @@
           </div>
         </div>
 
+        <div class="agent-version">
+          <div class="version-main">
+            <span class="eyebrow">运行版本</span>
+            <code v-if="agent.connection.buildCommit" :title="agent.connection.buildCommit">{{ shortCommit(agent.connection.buildCommit) }}</code>
+            <span v-else class="version-unknown">{{ agent.connection.ready ? "未知" : "离线，无法得知" }}</span>
+            <el-tag v-if="versionTag(agent)" size="small" :type="versionTag(agent)!.type" effect="plain">{{ versionTag(agent)!.label }}</el-tag>
+            <span v-if="agent.connection.ready" class="version-meta">
+              {{ platformLabel(agent.connection.platform) }}<template v-if="agent.connection.connectedAt"> · {{ formatClock(agent.connection.connectedAt) }} 连上</template>
+            </span>
+          </div>
+          <p v-if="missingFeatures(agent).length" class="version-note is-warning">
+            这个版本还不支持：{{ missingFeatures(agent).join("；") }}。更新后才能用。
+          </p>
+          <p v-if="updateLine(agent)" class="version-note" :class="`is-${updateLine(agent)!.tone}`" role="status">
+            <el-icon v-if="updateLine(agent)!.busy" class="is-loading"><Loading /></el-icon>
+            <span>{{ updateLine(agent)!.text }}</span>
+          </p>
+        </div>
+
         <div class="agent-card-foot">
           <span class="identity-state" :title="agent.replicaKeyFingerprint">
             {{ agent.replicaIdentityPinned ? 'Agent 加密身份已固定' : '首次上线后固定加密身份' }}
@@ -161,10 +185,10 @@
             <el-button
               text
               type="success"
-              :disabled="!agent.connection.ready"
+              :disabled="!agent.connection.ready || agent.update?.status === 'pending'"
               :loading="updatingAgentId === agent.id"
               @click="updateAgent(agent)"
-            >远程更新</el-button>
+            >{{ agent.update?.status === "pending" ? "更新中" : "远程更新" }}</el-button>
             <el-button
               v-if="agent.replicaIdentityPinned"
               text
@@ -209,11 +233,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
+import { Loading } from "@element-plus/icons-vue";
+import {
+  agentUpdateLine,
+  agentUpdateToast,
+  agentVersionTag,
+  formatClock,
+  missingAgentFeatures,
+  shortCommit,
+} from "./jwxtAgentVersion";
 import {
   adminApi,
   type JwxtAgentAdminItem,
+  type JwxtAgentUpdateView,
   type JwxtAgentsAdminConfig,
   type JwxtAgentsAdminPatch,
   type JwxtLoginPoolNode,
@@ -225,6 +259,13 @@ const loading = ref(false);
 const saving = ref(false);
 const generating = ref(false);
 const updatingAgentId = ref("");
+const serverCommit = ref("");
+const knownFeatures = ref<string[]>([]);
+// 每秒走一格，让“已等多久”自己往前跳。
+const now = ref(Date.now());
+let clockTimer: number | undefined;
+let pollTimer: number | undefined;
+let polling = false;
 const source = ref<"environment" | "database">("environment");
 const agentPath = ref("/api/internal/jwxt-agent/connect");
 const localLoginPool = ref<JwxtLoginPoolNode | null>(null);
@@ -246,6 +287,69 @@ const connectionUrl = computed(() => {
 });
 const crawlCandidates = computed(() => form.agents.filter((agent) => agent.enabled && agent.crawlEnabled));
 const onlineCount = computed(() => form.agents.filter((agent) => agent.connection.ready).length);
+const differingCount = computed(() => form.agents.filter((agent) => (
+  agentVersionTag(agent.connection, serverCommit.value)?.type === "warning"
+)).length);
+const pendingAgentIds = computed(() => form.agents.filter((agent) => agent.update?.status === "pending").map((agent) => agent.id));
+
+function versionTag(agent: EditableAgent) {
+  return agentVersionTag(agent.connection, serverCommit.value);
+}
+
+function missingFeatures(agent: EditableAgent) {
+  return missingAgentFeatures(agent.connection, knownFeatures.value);
+}
+
+function updateLine(agent: EditableAgent) {
+  return agentUpdateLine(agent.update, now.value);
+}
+
+function platformLabel(platform?: string) {
+  return platform === "win32" ? "Windows" : platform === "linux" ? "Linux" : platform === "darwin" ? "macOS" : "系统未知";
+}
+
+function applyUpdateView(agentId: string, update: JwxtAgentUpdateView, connection?: JwxtAgentAdminItem["connection"]) {
+  const agent = form.agents.find((item) => item.id === agentId);
+  if (!agent) return;
+  const wasPending = agent.update?.status === "pending";
+  agent.update = update;
+  if (connection) agent.connection = connection;
+  if (!wasPending || update.status === "pending") return;
+  const toast = agentUpdateToast(agent.name, update);
+  if (toast) ElMessage({ type: toast.type, message: toast.text, duration: 8000 });
+}
+
+// 只在有更新进行中时轮询，并且只替换连接状态和更新结论，不动表单里还没保存的修改。
+async function pollPendingUpdates() {
+  if (polling) return;
+  polling = true;
+  try {
+    await Promise.all(pendingAgentIds.value.map(async (agentId) => {
+      try {
+        const status = await adminApi.jwxtAgentUpdateStatus(agentId, { suppressErrorMessage: true, cacheTtlMs: 0 });
+        applyUpdateView(agentId, status.update, status.connection);
+      } catch { /* 下一轮再问 */ }
+    }));
+  } finally {
+    polling = false;
+  }
+}
+
+watch(() => pendingAgentIds.value.length > 0, (active) => {
+  window.clearInterval(pollTimer);
+  window.clearInterval(clockTimer);
+  pollTimer = undefined;
+  clockTimer = undefined;
+  if (!active) return;
+  now.value = Date.now();
+  clockTimer = window.setInterval(() => { now.value = Date.now(); }, 1000);
+  pollTimer = window.setInterval(() => { void pollPendingUpdates(); }, 5000);
+}, { immediate: true });
+
+onBeforeUnmount(() => {
+  window.clearInterval(pollTimer);
+  window.clearInterval(clockTimer);
+});
 const visibleEnv = computed(() => [
   `JWXT_AGENT_SERVER=${connectionUrl.value}`,
   `JWXT_AGENT_ID=${visibleAgentId.value}`,
@@ -377,9 +481,9 @@ async function updateAgent(agent: EditableAgent) {
   updatingAgentId.value = agent.id;
   try {
     const result = await adminApi.updateJwxtAgent(agent.id);
-    ElMessage.success(result.alreadyScheduled ? "该 Agent 已在更新中" : "更新指令已下发，Agent 将自动重连");
-    window.setTimeout(() => load().catch(() => undefined), 3_000);
-    window.setTimeout(() => load().catch(() => undefined), 15_000);
+    if (result.update) applyUpdateView(agent.id, result.update);
+    // “已下发”只说明节点收到了指令；成没成看这张卡片上随后给出的结论。
+    ElMessage.info(result.alreadyScheduled ? "该节点已经在更新中，结果会显示在卡片上" : "指令已下发，更新结果会显示在这张卡片上");
   } finally {
     updatingAgentId.value = "";
   }
@@ -427,6 +531,8 @@ async function persistCurrentForm() {
 function applySnapshot(data: JwxtAgentsAdminConfig) {
   source.value = data.source;
   agentPath.value = data.agentPath;
+  serverCommit.value = data.serverCommit ?? "";
+  knownFeatures.value = data.knownFeatures ?? [];
   localLoginPool.value = data.localLoginPool;
   form.localJwxtEnabled = data.localJwxtEnabled;
   form.localJwxtWeight = data.localJwxtWeight;
@@ -506,6 +612,16 @@ code { color: var(--cpu-primary); font-family: var(--cpu-font-mono); overflow-wr
 .agent-fields .el-input-number { width: 100%; }
 .runtime-stat { display: grid; align-content: center; justify-items: start; gap: 7px; color: var(--cpu-text-secondary); font-size: 13px; }
 .runtime-stat strong { color: var(--cpu-text); font-size: 16px; }
+.agent-version { display: grid; gap: 8px; padding: 0 20px 16px; }
+.version-main { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.version-main code { font-size: 13px; }
+.version-unknown, .version-meta { color: var(--cpu-text-muted); font-size: 12px; }
+.version-summary { color: var(--cpu-text-secondary); font-size: 13px; }
+.version-note { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 8px 12px; border-radius: 10px; background: var(--cpu-surface-soft); color: var(--cpu-text-secondary); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.version-note .el-icon { flex: 0 0 auto; margin-top: 3px; }
+.version-note.is-success { background: color-mix(in srgb, var(--cpu-success) 10%, var(--cpu-surface)); color: var(--cpu-success); }
+.version-note.is-warning { background: color-mix(in srgb, var(--cpu-warn) 12%, var(--cpu-surface)); color: var(--cpu-warn); }
+.version-note.is-danger { background: color-mix(in srgb, var(--cpu-danger) 10%, var(--cpu-surface)); color: var(--cpu-danger); }
 .agent-card-foot { padding: 10px 14px 10px 20px; border-top: 1px solid var(--cpu-border-soft); }
 .identity-state { color: var(--cpu-text-secondary); }
 .token-state { color: var(--cpu-text-muted); font-size: 12px; }

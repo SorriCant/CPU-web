@@ -4,12 +4,15 @@ import { readFileSync } from "node:fs";
 import { HttpError } from "../utils/response";
 import type { AgentReplicaRecipient } from "./jwxtAgentReplicaCrypto";
 import { AgentErrorCode } from "./jwxtAgentErrors";
+import type { AgentUpdateReport } from "./agentUpdateStatus";
 
 export type GatewayState = {
   configured: boolean; online: boolean; ready: boolean; inFlight: number;
   maxConcurrent: number; connectedAt: number | null; lastPongAt: number | null;
   buildCommit: string; platform: string; jwxtEnabled: boolean; crawlEnabled: boolean;
   replicaBackfill?: boolean;
+  features?: string[];
+  lastUpdate?: AgentUpdateReport | null;
 };
 export type GatewaySnapshot = {
   protocol: 1; instance: string;
