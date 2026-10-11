@@ -12,7 +12,8 @@ export type RecordKind =
   | "retake-options"
   | "grade-summary"
   | "free-rooms"
-  | "timetable-search";
+  | "timetable-search"
+  | "class-timetable";
 
 /** 与成绩、培养方案页的标签配色一致：必修红、限选橙、公选绿、选修主色、其余灰。 */
 export type RecordTagType = "danger" | "warning" | "success" | "primary" | "info";
@@ -141,8 +142,6 @@ function textbookCards(data: Row) {
   return keyed(rows(data.list).map((row) => ({
     title: row.title,
     sub: compact([row.author, row.publisher, row.edition]).join(" · "),
-    badge: row.ordered === "是" ? "已征订" : row.ordered === "否" ? "未征订" : undefined,
-    badgeType: row.ordered === "是" ? "success" as const : "info" as const,
     value: typeof row.price === "number" ? `¥${row.price.toFixed(2)}` : undefined,
     valueLabel: typeof row.price === "number" ? "定价" : undefined,
     meta: compact([row.courseName, row.teacher, row.nature]),
@@ -269,6 +268,93 @@ export function timetableCards(data: Row | null | undefined) {
   })), "timetable");
 }
 
+// ============ 课表检索结果的筛选、分组和导出 ============
+
+export interface TimetableRow {
+  courseName: string;
+  courseCode?: string;
+  teacher?: string;
+  teacherTitle?: string;
+  room?: string;
+  building?: string;
+  weekday?: string;
+  periods?: string;
+  weeks?: string;
+  weekType?: string;
+  className?: string;
+  department?: string;
+  credits?: number;
+  hours?: number;
+  enrolled?: number;
+  nature?: string;
+  category?: string;
+  assessment?: string;
+}
+
+export const WEEKDAYS = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"];
+
+/** “1-8”“3,5,7-9”这样的周次里有没有第 week 周；单周／双周再按奇偶筛一次。 */
+export function weeksInclude(weeks: string | undefined, weekType: string | undefined, week: number) {
+  if (!weeks) return true;
+  if (/单/.test(weekType ?? "") && week % 2 === 0) return false;
+  if (/双/.test(weekType ?? "") && week % 2 === 1) return false;
+  return weeks.split(/[,，]/).some((part) => {
+    const range = /^\s*(\d+)\s*(?:-\s*(\d+))?/.exec(part);
+    if (!range) return false;
+    const from = Number.parseInt(range[1], 10);
+    const to = range[2] ? Number.parseInt(range[2], 10) : from;
+    return week >= from && week <= to;
+  });
+}
+
+export function filterTimetable(list: TimetableRow[], options: { week?: number | null; weekday?: string }) {
+  return list.filter((row) => {
+    if (options.weekday && row.weekday !== options.weekday) return false;
+    if (options.week && !weeksInclude(row.weeks, row.weekType, options.week)) return false;
+    return true;
+  });
+}
+
+/** 按星期分组，一天一组；没有星期的排在最后。 */
+export function timetableDayGroups(list: TimetableRow[]): RecordCardGroup[] {
+  const days = [...WEEKDAYS, ""];
+  return days.flatMap((day) => {
+    const rows = list.filter((row) => (row.weekday ?? "") === day || (!day && !WEEKDAYS.includes(row.weekday ?? "")));
+    if (!rows.length) return [];
+    return [{
+      key: day || "other",
+      label: day || "时间未定",
+      note: `${rows.length} 节`,
+      cards: timetableCards({ list: rows }).map((card) => ({ ...card, key: `${day || "other"}-${card.key}` })),
+    }];
+  });
+}
+
+function csvCell(value: unknown) {
+  const text = value === undefined || value === null ? "" : String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+/** 导出给 Excel 用的表格；调用方负责加 BOM。 */
+export function timetableCsv(list: TimetableRow[]) {
+  const header = ["星期", "节次", "周次", "课程", "教师", "教室", "上课班级", "学分", "学时", "课程属性", "考核方式", "开课单位"];
+  const lines = list.map((row) => [
+    row.weekday,
+    row.periods,
+    row.weeks ? `${row.weeks}${row.weekType ? `(${row.weekType})` : ""}` : "",
+    row.courseName,
+    row.teacher,
+    [row.building, row.room].filter(Boolean).join(" "),
+    row.className,
+    row.credits,
+    row.hours,
+    row.category,
+    row.assessment,
+    row.department,
+  ].map(csvCell).join(","));
+  return [header.join(","), ...lines].join("\r\n");
+}
+
 /**
  * 单组数据也按一组返回，页面统一渲染。同一页里放几类数据时用 label 给单组数据补上标题
  * （例如“选课轮次”“转专业计划”）。
@@ -317,13 +403,46 @@ export function roomBuildings(rooms: FreeRoom[]) {
   return names.sort((a, b) => Number(a === "其他") - Number(b === "其他") || a.localeCompare(b));
 }
 
+export interface RoomFilter {
+  building?: string;
+  slots?: number[];
+  /** 至少多少座。 */
+  minSeats?: number;
+  type?: string;
+  /** 教室号里包含的字，不分大小写。 */
+  keyword?: string;
+}
+
 /** 所选时段全部空闲才算空；没选时段时不按占用过滤。 */
-export function filterRooms(rooms: FreeRoom[], options: { building?: string; slots?: number[] }) {
+export function filterRooms(rooms: FreeRoom[], options: RoomFilter) {
   const slots = options.slots ?? [];
+  const keyword = (options.keyword ?? "").trim().toLowerCase();
   return rooms.filter((room) => {
     if (options.building && roomBuilding(room.name) !== options.building) return false;
+    if (options.minSeats && (room.seats ?? 0) < options.minSeats) return false;
+    if (options.type && room.type !== options.type) return false;
+    if (keyword && !room.name.toLowerCase().includes(keyword)) return false;
     return slots.every((index) => !room.states[index]);
   });
+}
+
+export function roomTypes(rooms: FreeRoom[]) {
+  return Array.from(new Set(rooms.map((room) => room.type).filter((type): type is string => Boolean(type))))
+    .sort((a, b) => a.localeCompare(b, "zh-Hans-CN"));
+}
+
+export type RoomSort = "building" | "free" | "seats";
+
+/**
+ * free：选了时段时按“从那个时段起还能连续空多久”排，没选时按全天空闲的时段数排；
+ * seats：座位多的在前。building 不改变顺序，交给按楼分组。
+ */
+export function sortRooms(rooms: FreeRoom[], mode: RoomSort, slots: FreeRoomSlot[], fromSlot: number) {
+  if (mode === "building") return rooms;
+  const byName = (a: FreeRoom, b: FreeRoom) => a.name.localeCompare(b.name);
+  if (mode === "seats") return [...rooms].sort((a, b) => (b.seats ?? 0) - (a.seats ?? 0) || byName(a, b));
+  const score = (room: FreeRoom) => (fromSlot >= 0 ? freeUntil(room, slots, fromSlot) : String(freeSlotCount(room)).padStart(2, "0"));
+  return [...rooms].sort((a, b) => score(b).localeCompare(score(a)) || (b.seats ?? 0) - (a.seats ?? 0) || byName(a, b));
 }
 
 export interface RoomBuildingGroup { name: string; rooms: FreeRoom[] }

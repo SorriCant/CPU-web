@@ -10,6 +10,7 @@ import {
   jwxtFetchHtml,
   jwxtFetchModernHtml,
   jwxtDownloadModernPdf,
+  jwxtFetchEcertTranscriptPdf,
   jwxtPostForm,
   fetchIServiceApps,
   fetchIServiceIcon,
@@ -364,6 +365,7 @@ export async function getRecords(token: string, args: JwxtRecordsArgs) {
     get: (path) => jwxtFetchModernHtml(token, path),
     post: (path, form) => jwxtFetchModernHtml(token, path, { form }),
     pdf: (path, form) => jwxtDownloadModernPdf(token, path, form),
+    ecertPdf: (language) => jwxtFetchEcertTranscriptPdf(token, language),
   }, args);
   return { ...result, source: "modern" as const };
 }

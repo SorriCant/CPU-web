@@ -1192,7 +1192,7 @@ export interface JwxtModernFile {
 }
 
 // Agent 通道单条消息上限 2MB，base64 之后仍要放得下。
-const MODERN_FILE_MAX_BYTES = 1_200_000;
+const MODERN_FILE_MAX_BYTES = 1_450_000;
 
 /** 以表单提交方式从新版教务导出一份 PDF（例如成绩单）；返回的不是 PDF 时按登录失效或导出未开放处理。 */
 export async function jwxtDownloadModernPdf(
@@ -1239,6 +1239,103 @@ export async function jwxtDownloadModernPdf(
     byteLength: file.bytes.length,
     dataBase64: file.bytes.toString("base64"),
   };
+}
+
+// ============ 学生电子证明平台（dzpzstu.cpu.edu.cn）============
+
+const ECERT_HOST = "dzpzstu.cpu.edu.cn";
+const ECERT_SERVICE_URL = `https://${ECERT_HOST}/student/`;
+const ECERT_API_ORIGIN = `https://${ECERT_HOST}/student`;
+const ECERT_PREVIEW_PATH_PATTERN = /^[A-Za-z0-9_][A-Za-z0-9_\-./]{0,200}\.pdf$/;
+
+export type EcertTranscriptLanguage = "zh" | "en";
+
+/**
+ * 用已有的统一认证会话向电子证明平台换一枚访问令牌。
+ * 统一认证把一次性 ticket 拼在平台地址后面；平台的前端再拿它调 validateLogin 换令牌，这里照做。
+ * 令牌只在本次导出里使用，不写进会话。
+ */
+async function obtainEcertAccessToken(session: ActiveSession) {
+  let current = `https://${CPU_ID_SSO_HOST}/sso/login?service=${encodeURIComponent(ECERT_SERVICE_URL)}`;
+  let ticket = "";
+  for (let hop = 0; hop < 8 && !ticket; hop += 1) {
+    const res = await fetchWithJar(session.jar, current);
+    const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+    // 没有跳转就是统一认证要求重新登录。
+    if (!location) throw Errors.unauthorized("统一认证会话已失效，请重新登录");
+    const next = new URL(location, current);
+    const host = next.hostname.toLowerCase();
+    if (host === ECERT_HOST) {
+      ticket = next.searchParams.get("ticket") || "";
+      if (!ticket) throw Errors.badGateway("电子证明平台没有返回登录凭据");
+      break;
+    }
+    if (host !== CPU_ID_SSO_HOST) throw Errors.badGateway("统一认证跳转到了意外的地址");
+    current = next.toString();
+  }
+  if (!ticket) throw Errors.badGateway("电子证明平台登录没有完成");
+
+  const validate = new URL(`${ECERT_API_ORIGIN}/cas/client/validateLogin`);
+  validate.searchParams.set("ticket", ticket);
+  validate.searchParams.set("service", ECERT_SERVICE_URL);
+  const res = await fetch(validate, { headers: { "User-Agent": UA, Accept: "application/json, text/plain, */*" } });
+  // 平台维护页不是 JSON，按登录失败处理。
+  const body = await res.json().catch(() => null) as { success?: boolean; result?: { token?: unknown } } | null;
+  const accessToken = body?.success ? String(body.result?.token || "") : "";
+  if (!accessToken) throw Errors.badGateway("电子证明平台暂时无法登录，请稍后再试");
+  return accessToken;
+}
+
+async function ecertJson(accessToken: string, path: string) {
+  const res = await fetch(`${ECERT_API_ORIGIN}${path}`, {
+    headers: { "User-Agent": UA, Accept: "application/json, text/plain, */*", "X-Access-Token": accessToken },
+  });
+  try {
+    return await res.json() as { success?: boolean; message?: unknown; result?: any };
+  } catch {
+    throw Errors.badGateway("电子证明平台暂时没有返回可识别的数据");
+  }
+}
+
+/**
+ * 电子证明平台的成绩单预览件：平台自己的“预览”功能生成的 PDF，版式与正式件相同但不带电子签章。
+ * 只做读取；下单、支付和发邮件这些会在学生账号下留记录的操作一概不碰。
+ */
+export async function jwxtFetchEcertTranscriptPdf(token: string, language: EcertTranscriptLanguage): Promise<JwxtModernFile> {
+  const sess = await getSession(token);
+  if (!sess) throw Errors.unauthorized("教务会话已失效，请重新登录");
+  const accessToken = await obtainEcertAccessToken(sess);
+  await persistActiveSession(token, sess);
+
+  const templates = await ecertJson(accessToken, "/student/caTemplate/ykdxlist?pageNo=1&pageSize=100");
+  const records: Array<Record<string, unknown>> = Array.isArray(templates.result?.records) ? templates.result.records : [];
+  const wanted = language === "en" ? /Transcript in English|英文成绩单/ : /Transcript in Chinese|中文成绩单/;
+  const template = records.find((item) => (
+    String(item.status ?? "1") === "1" && wanted.test(`${item.serviceNameEn ?? ""} ${item.serviceName ?? ""} ${item.displayName ?? ""}`)
+  ));
+  const templateId = String(template?.id || "");
+  if (!/^[A-Za-z0-9]{8,64}$/.test(templateId)) {
+    throw Errors.badGateway(language === "en" ? "电子证明平台当前没有开放英文成绩单" : "电子证明平台当前没有开放中文成绩单");
+  }
+
+  const preview = await ecertJson(
+    accessToken,
+    `/student/caTemplate/preview_file?${new URLSearchParams({ templateId, isbzf: "0", kcxz: "0", xfjd: "0", xzkc: "" })}`,
+  );
+  const filePath = typeof preview.message === "string" ? preview.message : "";
+  if (!preview.success || !ECERT_PREVIEW_PATH_PATTERN.test(filePath) || filePath.includes("..")) {
+    throw Errors.badGateway("电子证明平台暂时没有生成成绩单");
+  }
+
+  // 预览文件取一次就失效，所以这里只请求一次。
+  const res = await fetch(`${ECERT_API_ORIGIN}/sys/common/view/${filePath}?t=${Date.now()}`, {
+    headers: { "User-Agent": UA, "X-Access-Token": accessToken },
+  });
+  if (Number(res.headers.get("content-length") || 0) > MODERN_FILE_MAX_BYTES) throw Errors.badGateway("成绩单文件过大，请到电子证明平台下载");
+  const bytes = Buffer.from(await res.arrayBuffer());
+  if (bytes.length > MODERN_FILE_MAX_BYTES) throw Errors.badGateway("成绩单文件过大，请到电子证明平台下载");
+  if (bytes.subarray(0, 5).toString("latin1") !== "%PDF-") throw Errors.badGateway("电子证明平台暂时没有返回成绩单文件");
+  return { contentType: "application/pdf", byteLength: bytes.length, dataBase64: bytes.toString("base64") };
 }
 
 export interface CpuFetchTextResult {

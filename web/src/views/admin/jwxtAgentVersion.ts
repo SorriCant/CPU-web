@@ -25,6 +25,7 @@ export type Tone = "success" | "warning" | "danger" | "info";
 const FEATURE_LABELS: Record<string, string> = {
   "jwxt.records": "选课、教室、等级考试、成绩单等新数据",
   "agent.update-status": "回报更新进度和失败原因",
+  "jwxt.records.ecert-and-classes": "电子证明平台成绩单、按班级查课表",
 };
 
 const STEP_LABELS: Record<NonNullable<AgentUpdateView["step"]>, string> = {

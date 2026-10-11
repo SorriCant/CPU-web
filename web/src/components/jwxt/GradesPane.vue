@@ -113,22 +113,6 @@
       </div>
     </div>
 
-    <div class="service-reco">
-      <div>
-        <span class="reco-kicker">服务推荐</span>
-        <b>成绩证明办理</b>
-        <p>需要开具成绩相关证明时，可前往学校电子证明平台办理。</p>
-      </div>
-      <a
-        class="reco-link"
-        href="https://dzpzstu.cpu.edu.cn/student/"
-        target="_blank"
-        rel="noopener noreferrer"
-      >
-        前往办理
-      </a>
-    </div>
-
     <div v-loading="loading">
       <el-alert
         v-if="loadError"
@@ -823,55 +807,6 @@ code { background: rgba(255,255,255,0.12); padding: 1px 4px; border-radius: var(
   white-space: nowrap;
 }
 
-.service-reco {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 12px 14px;
-  border: 1px solid rgba(20, 143, 123, 0.26);
-  border-radius: var(--cpu-radius-m);
-  background: rgba(20, 143, 123, 0.08);
-}
-
-.service-reco b {
-  display: block;
-  margin-top: 2px;
-  color: var(--cpu-text);
-  font-size: var(--cpu-fs-m);
-}
-
-.service-reco p {
-  margin: 3px 0 0;
-  color: var(--cpu-text-secondary);
-  font-size: var(--cpu-fs-xs);
-  line-height: 1.5;
-}
-
-.reco-kicker {
-  color: var(--cpu-primary);
-  font-size: var(--cpu-fs-xs);
-  font-weight: 500;
-}
-
-.reco-link {
-  flex: 0 0 auto;
-  border: 1px solid var(--cpu-primary);
-  border-radius: var(--cpu-radius-m);
-  padding: 7px 12px;
-  color: var(--cpu-primary);
-  font-size: var(--cpu-fs-s);
-  font-weight: 500;
-  text-decoration: none;
-  white-space: nowrap;
-  transition: background 0.15s, color 0.15s;
-}
-
-.reco-link:hover {
-  background: var(--cpu-primary);
-  color: #fff;
-}
-
 .pane-alert {
   margin-bottom: 12px;
 }
@@ -1054,29 +989,6 @@ code { background: rgba(255,255,255,0.12); padding: 1px 4px; border-radius: var(
 .grades-pane.is-cards .quick-actions :deep(.el-button) {
   flex: 1 1 calc(50% - 4px);
   min-width: 0;
-}
-
-.grades-pane.is-cards .service-reco {
-  padding: 9px 11px;
-  align-items: center;
-  flex-direction: row;
-  border-radius: var(--cpu-radius-m);
-}
-
-.grades-pane.is-cards .service-reco .reco-kicker,
-.grades-pane.is-cards .service-reco p {
-  display: none;
-}
-
-.grades-pane.is-cards .service-reco b {
-  margin: 0;
-  font-size: var(--cpu-fs-s);
-}
-
-.grades-pane.is-cards .reco-link {
-  border: 0;
-  padding: 4px 0;
-  text-align: center;
 }
 
 .grades-pane.is-cards .sem-head {

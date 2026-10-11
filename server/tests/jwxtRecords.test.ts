@@ -19,6 +19,7 @@ function fakeSource(handler: Handler) {
     get: async (path) => respond(path),
     post: async (path, form) => respond(path, form),
     pdf: async () => ({ contentType: "application/pdf", byteLength: 4, dataBase64: "JVBERg==" }),
+    ecertPdf: async () => { throw new Error("unexpected e-certificate request"); },
   };
   return { source, requests };
 }

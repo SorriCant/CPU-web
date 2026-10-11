@@ -150,7 +150,12 @@ export function getRecords(token: string, args: Parameters<typeof local.getRecor
   return requestWithToken(token, "jwxt.records", (innerToken) => ({ token: innerToken, ...args }))
     .catch((error) => {
       // 会话所在的节点还没更新到认识这个动作的版本：说清楚原因，不把内部报错丢给用户。
-      if (error instanceof HttpError && /不支持该教务操作/.test(error.message)) {
+      const needsNewerNode = Boolean(args.variant && args.variant !== "jwxt") || args.kind === "class-timetable";
+      if (error instanceof HttpError && (
+        /不支持该教务操作/.test(error.message)
+        // 旧节点不认识后加的参数或数据类型，校验时整体拒绝。
+        || (needsNewerNode && /Agent 请求参数错误/.test(error.message))
+      )) {
         throw new HttpError(503, 5003, "承载你教务会话的节点还没有更新，暂时读不了这项数据，请稍后再试");
       }
       throw error;

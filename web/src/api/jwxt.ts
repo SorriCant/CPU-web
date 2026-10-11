@@ -257,13 +257,18 @@ export const jwxtApi = {
   }),
   /** 课表、成绩之外的教务数据（空教室、课表检索、选课、教材、等级考试等），按 kind 取。 */
   records: (
-    params: { kind: string; semester?: string; date?: string; scope?: string; keyword?: string; refresh?: string },
+    params: {
+      kind: string; semester?: string; date?: string; scope?: string; keyword?: string;
+      grade?: string; major?: string; classId?: string; refresh?: string;
+    },
     options?: { silent?: boolean },
   ) => inst.get<unknown, JwxtDataResponse>("/records", {
     params,
     ...(options?.silent ? ({ suppressErrorMessage: true } as any) : undefined),
   }),
-  transcriptPdf: () => inst.get<unknown, Blob>("/transcript.pdf", {
+  /** ecert-zh / ecert-en：电子证明平台的预览件；jwxt：教务系统导出的版本。 */
+  transcriptPdf: (variant: "ecert-zh" | "ecert-en" | "jwxt") => inst.get<unknown, Blob>("/transcript.pdf", {
+    params: { variant },
     responseType: "blob",
     timeout: 60000,
     ...({ suppressErrorMessage: true } as any),

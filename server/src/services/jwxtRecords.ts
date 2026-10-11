@@ -7,7 +7,7 @@
 import * as cheerio from "cheerio";
 import { z } from "zod";
 import { Errors } from "../utils/response";
-import type { JwxtModernFile } from "./jwxtClient";
+import type { EcertTranscriptLanguage, JwxtModernFile } from "./jwxtClient";
 import type { SemesterOption } from "./jwxtParser";
 
 export const JWXT_RECORD_KINDS = [
@@ -23,6 +23,7 @@ export const JWXT_RECORD_KINDS = [
   "grade-summary",
   "free-rooms",
   "timetable-search",
+  "class-timetable",
   "transcript",
 ] as const;
 
@@ -31,12 +32,19 @@ export type JwxtRecordKind = typeof JWXT_RECORD_KINDS[number];
 export const JWXT_TIMETABLE_SCOPES = ["teacher", "classroom", "course"] as const;
 export type JwxtTimetableScope = typeof JWXT_TIMETABLE_SCOPES[number];
 
+export const JWXT_TRANSCRIPT_VARIANTS = ["ecert-zh", "ecert-en", "jwxt"] as const;
+export type JwxtTranscriptVariant = typeof JWXT_TRANSCRIPT_VARIANTS[number];
+
 export const jwxtRecordsArgsSchema = z.object({
   kind: z.enum(JWXT_RECORD_KINDS),
   semester: z.string().max(16).optional(),
   date: z.string().max(16).optional(),
   scope: z.enum(JWXT_TIMETABLE_SCOPES).optional(),
   keyword: z.string().max(64).optional(),
+  variant: z.enum(JWXT_TRANSCRIPT_VARIANTS).optional(),
+  grade: z.string().max(8).optional(),
+  major: z.string().max(64).optional(),
+  classId: z.string().max(64).optional(),
 });
 
 export interface JwxtRecordsArgs {
@@ -47,12 +55,19 @@ export interface JwxtRecordsArgs {
   /** 全校课表检索：按教师、教室还是课程查。 */
   scope?: JwxtTimetableScope;
   keyword?: string;
+  /** 成绩单：电子证明平台的中文／英文预览件，或教务系统导出的版本。 */
+  variant?: JwxtTranscriptVariant;
+  /** 班级课表：入学年级、专业、班级，逐级选。 */
+  grade?: string;
+  major?: string;
+  classId?: string;
 }
 
 export interface JwxtRecordsSource {
   get(path: string): Promise<string>;
   post(path: string, form: Record<string, string>): Promise<string>;
   pdf(path: string, form: Record<string, string>): Promise<JwxtModernFile>;
+  ecertPdf(language: EcertTranscriptLanguage): Promise<JwxtModernFile>;
 }
 
 type Row = Record<string, unknown>;
@@ -410,7 +425,6 @@ export interface TextbookRow {
   teacher?: string;
   department?: string;
   nature?: string;
-  ordered?: string;
 }
 
 async function loadTextbooks(source: JwxtRecordsSource, args: JwxtRecordsArgs) {
@@ -434,7 +448,7 @@ async function loadTextbooks(source: JwxtRecordsSource, args: JwxtRecordsArgs) {
       teacher: stripStaffNo(row.skjs) || undefined,
       department: optional(row.dwmc),
       nature: optional(row.kcxz) ?? optional(row.kcsx),
-      ordered: optional(row.zdzt),
+      // 源站的“征订状态”说的是这本教材学校有没有征订，不是学生本人订没订，容易误读，不外传。
     }];
   });
   return { kind: "textbooks" as const, semester, semesters, list };
@@ -676,9 +690,12 @@ async function loadGradeSummary(source: JwxtRecordsSource) {
 
 // ============ 成绩单 ============
 
-async function loadTranscript(source: JwxtRecordsSource) {
-  const file = await source.pdf("/jsxsd/kscj/printXscjk?xsfs=all&xnxq=", {});
-  return { kind: "transcript" as const, file };
+async function loadTranscript(source: JwxtRecordsSource, args: JwxtRecordsArgs) {
+  const variant = args.variant ?? "jwxt";
+  const file = variant === "jwxt"
+    ? await source.pdf("/jsxsd/kscj/printXscjk?xsfs=all&xnxq=", {})
+    : await source.ecertPdf(variant === "ecert-en" ? "en" : "zh");
+  return { kind: "transcript" as const, variant, file };
 }
 
 // ============ 空教室 ============
@@ -858,6 +875,115 @@ function firstNumber(value?: string) {
   return Number.isFinite(parsed) ? parsed : 99;
 }
 
+function timetableRow(row: Row): TimetableSearchRow[] {
+  const courseName = text(row.kcmc);
+  if (!courseName) return [];
+  const weekType = text(row.sjbz);
+  return [{
+    courseName,
+    courseCode: optional(row.kch),
+    teacher: stripStaffNo(row.xm ?? row.jsxm) || undefined,
+    teacherTitle: optional(row.jszc),
+    room: optional(row.jsmc),
+    building: optional(row.jzwmc),
+    weekday: optional(row.zzdweek),
+    periods: optional(row.jc),
+    weeks: optional(row.kkzc),
+    weekType: weekType && weekType !== "全部" ? weekType : undefined,
+    className: optional(row.ktmc) ?? optional(row.bj),
+    department: optional(row.kkdw),
+    credits: num(row.xf),
+    hours: num(row.zxs),
+    enrolled: num(row.xkrs),
+    seats: num(row.yxzws),
+    nature: optional(row.zzdkcxz),
+    category: optional(row.zzdkclb),
+    assessment: optional(row.zzdksfs),
+  }];
+}
+
+function sortTimetable(list: TimetableSearchRow[]) {
+  return list.sort((a, b) => {
+    const dayA = WEEKDAY_ORDER.indexOf(a.weekday ?? "");
+    const dayB = WEEKDAY_ORDER.indexOf(b.weekday ?? "");
+    return (dayA < 0 ? 9 : dayA) - (dayB < 0 ? 9 : dayB)
+      || firstNumber(a.periods) - firstNumber(b.periods)
+      || firstNumber(a.weeks) - firstNumber(b.weeks)
+      || a.courseName.localeCompare(b.courseName, "zh-Hans-CN");
+  });
+}
+
+// ============ 班级课表 ============
+
+export interface ClassOption { value: string; label: string }
+
+const GRADE_LIMIT = 8;
+const OPTION_ID_PATTERN = /^[A-Za-z0-9]{1,64}$/;
+
+function optionRows(raw: string, value: string, label: string): ClassOption[] {
+  const parsed = parseJson(raw);
+  const data = (parsed as Row | null)?.data;
+  if (!Array.isArray(data)) return [];
+  return data.flatMap((item): ClassOption[] => {
+    if (!item || typeof item !== "object") return [];
+    const id = text((item as Row)[value]);
+    const name = text((item as Row)[label]);
+    return OPTION_ID_PATTERN.test(id) && name ? [{ value: id, label: name }] : [];
+  });
+}
+
+/**
+ * 逐级选班：只给年级时返回该年级的专业，给了专业再返回班级，给了班级才取整班课表。
+ * 每一级的可选项都来自教务自己的下拉，班级编号不接受自由输入以外的字符。
+ */
+async function loadClassTimetable(source: JwxtRecordsSource, args: JwxtRecordsArgs) {
+  const grade = text(args.grade);
+  const major = text(args.major);
+  const classId = text(args.classId);
+  if (grade && !/^\d{4}$/.test(grade)) throw Errors.badRequest("年级格式不正确");
+  if (major && !OPTION_ID_PATTERN.test(major)) throw Errors.badRequest("专业编号不正确");
+  if (classId && !OPTION_ID_PATTERN.test(classId)) throw Errors.badRequest("班级编号不正确");
+
+  const page = await source.get("/jsxsd/kbcx/kbxx_xzb");
+  const semesters = selectOptions(page, "xnxq01id");
+  const semester = pickSemester(args, semesters);
+  const periodMode = selectOptions(page, "kbjcmsid")[0]?.value ?? "";
+  if (!semester) throw Errors.badGateway("学校教务暂时没有开放课表检索");
+  const grades = selectOptions(page, "ksnd").slice(0, GRADE_LIMIT).map(({ value, label }) => ({ value, label: `${label} 级` }));
+
+  const majors = grade
+    ? optionRows(await source.get(withQuery("/jsxsd/comm/getZy", { xx0301id: "", ksnd: grade })), "jx01id", "zymc")
+    : [];
+  const classes = grade && major
+    ? optionRows(await source.get(withQuery("/jsxsd/comm/getBj", { rxnf: grade, jx01id: major })), "xx04id", "bj")
+    : [];
+
+  let list: TimetableSearchRow[] = [];
+  let className = "";
+  if (classId) {
+    const { rows } = await fetchList(source, "/jsxsd/kbcx/kbxx_xzb_ifr", {
+      xnxq01id: semester,
+      kbjcmsid: periodMode,
+      skbj: classId,
+    });
+    list = sortTimetable(rows.flatMap(timetableRow));
+    className = classes.find((item) => item.value === classId)?.label ?? list[0]?.className ?? "";
+  }
+  return {
+    kind: "class-timetable" as const,
+    semester,
+    semesters,
+    grades,
+    grade,
+    majors,
+    major,
+    classes,
+    classId,
+    className,
+    list,
+  };
+}
+
 async function loadTimetableSearch(source: JwxtRecordsSource, args: JwxtRecordsArgs) {
   const scope = args.scope ?? "course";
   const config = TIMETABLE_SOURCES[scope];
@@ -879,39 +1005,7 @@ async function loadTimetableSearch(source: JwxtRecordsSource, args: JwxtRecordsA
     pageNum: "1",
     pageSize: String(TIMETABLE_SEARCH_LIMIT),
   })));
-  const list = current.rows.slice(0, TIMETABLE_SEARCH_LIMIT).flatMap((row): TimetableSearchRow[] => {
-    const courseName = text(row.kcmc);
-    if (!courseName) return [];
-    const weekType = text(row.sjbz);
-    return [{
-      courseName,
-      courseCode: optional(row.kch),
-      teacher: stripStaffNo(row.xm ?? row.jsxm) || undefined,
-      teacherTitle: optional(row.jszc),
-      room: optional(row.jsmc),
-      building: optional(row.jzwmc),
-      weekday: optional(row.zzdweek),
-      periods: optional(row.jc),
-      weeks: optional(row.kkzc),
-      weekType: weekType && weekType !== "全部" ? weekType : undefined,
-      className: optional(row.ktmc),
-      department: optional(row.kkdw),
-      credits: num(row.xf),
-      hours: num(row.zxs),
-      enrolled: num(row.xkrs),
-      seats: num(row.yxzws),
-      nature: optional(row.zzdkcxz),
-      category: optional(row.zzdkclb),
-      assessment: optional(row.zzdksfs),
-    }];
-  });
-  list.sort((a, b) => {
-    const dayA = WEEKDAY_ORDER.indexOf(a.weekday ?? "");
-    const dayB = WEEKDAY_ORDER.indexOf(b.weekday ?? "");
-    return (dayA < 0 ? 9 : dayA) - (dayB < 0 ? 9 : dayB)
-      || firstNumber(a.periods) - firstNumber(b.periods)
-      || a.courseName.localeCompare(b.courseName, "zh-Hans-CN");
-  });
+  const list = sortTimetable(current.rows.slice(0, TIMETABLE_SEARCH_LIMIT).flatMap(timetableRow));
   const total = Math.max(current.count ?? 0, list.length);
   return {
     kind: "timetable-search" as const,
@@ -941,7 +1035,8 @@ export async function loadJwxtRecords(source: JwxtRecordsSource, args: JwxtRecor
     case "grade-summary": return loadGradeSummary(source);
     case "free-rooms": return loadFreeRooms(source, args);
     case "timetable-search": return loadTimetableSearch(source, args);
-    case "transcript": return loadTranscript(source);
+    case "class-timetable": return loadClassTimetable(source, args);
+    case "transcript": return loadTranscript(source, args);
     default: throw Errors.badRequest("不支持的教务数据类型");
   }
 }

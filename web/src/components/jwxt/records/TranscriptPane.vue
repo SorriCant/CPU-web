@@ -11,14 +11,32 @@
       以上是教务系统自己的统计<template v-if="state.data.computedAt">（统计于 {{ state.data.computedAt }}）</template>，与“课程成绩”里按课程重新计算的口径可能不同。
     </p>
 
-    <div class="transcript">
+    <section class="transcript is-primary">
       <div class="transcript-text">
-        <b>成绩单 PDF</b>
-        <p>由学校教务系统现场生成，包含全部学期的课程成绩。文件只下载到你的设备，本站不保存。</p>
+        <span class="transcript-kicker">推荐</span>
+        <b>电子证明平台成绩单</b>
+        <p>
+          由学校电子证明平台生成，是对外提交用的版式，有中文和英文两种。这里下载的是平台的预览件，不带电子签章；
+          需要带签章、可验真的正式件时，请到平台申请，平台会发到你登记的邮箱。在读证明、预计毕业证明等也在那里办。
+        </p>
       </div>
-      <el-button type="primary" :icon="Download" :loading="busy" :disabled="busy" @click="download">下载成绩单</el-button>
-    </div>
+      <div class="transcript-actions">
+        <el-button type="primary" :icon="Download" :loading="busy === 'ecert-zh'" :disabled="Boolean(busy)" @click="download('ecert-zh')">中文成绩单</el-button>
+        <el-button :icon="Download" :loading="busy === 'ecert-en'" :disabled="Boolean(busy)" @click="download('ecert-en')">英文成绩单</el-button>
+        <a class="transcript-link" href="https://dzpzstu.cpu.edu.cn/student/" target="_blank" rel="noopener noreferrer">
+          前往平台办理正式件
+        </a>
+      </div>
+    </section>
     <el-alert v-if="downloadError" type="error" :closable="false" show-icon :title="downloadError" />
+
+    <p class="record-tip">
+      电子证明平台打不开时，可以先下载
+      <button type="button" class="text-button" :disabled="Boolean(busy)" @click="download('jwxt')">
+        {{ busy === "jwxt" ? "正在生成…" : "教务系统导出的成绩单" }}
+      </button>
+      ，版式比较简陋，只适合自己核对。
+    </p>
   </RecordShell>
 </template>
 
@@ -26,14 +44,23 @@
 import { onBeforeUnmount, ref } from "vue";
 import { Download } from "@element-plus/icons-vue";
 import RecordShell from "./RecordShell.vue";
+import { saveFile } from "./saveFile";
 import { useRecord } from "./useRecord";
 import { jwxtApi } from "@/api/jwxt";
 import { useJwxtStore } from "@/stores/jwxt";
 
+type Variant = "ecert-zh" | "ecert-en" | "jwxt";
+
+const FILE_NAMES: Record<Variant, string> = {
+  "ecert-zh": "中文成绩单.pdf",
+  "ecert-en": "英文成绩单.pdf",
+  jwxt: "教务成绩单.pdf",
+};
+
 const props = withDefaults(defineProps<{ active?: boolean }>(), { active: false });
 const jwxt = useJwxtStore();
 const { state, reload } = useRecord("grade-summary", () => props.active);
-const busy = ref(false);
+const busy = ref<Variant | "">("");
 const downloadError = ref("");
 let disposed = false;
 
@@ -43,39 +70,22 @@ function figure(value: unknown) {
   return typeof value === "number" ? String(value) : "—";
 }
 
-async function download() {
+async function download(variant: Variant) {
   if (busy.value) return;
-  busy.value = true;
+  busy.value = variant;
   downloadError.value = "";
   try {
-    const blob = await jwxt.withSessionRetry(() => jwxtApi.transcriptPdf());
+    const blob = await jwxt.withSessionRetry(() => jwxtApi.transcriptPdf(variant));
     if (!(blob instanceof Blob) || blob.size < 5) throw new Error("empty");
-    const fileName = "成绩单.pdf";
-    const file = new File([blob], fileName, { type: "application/pdf" });
-    const nav = navigator as Navigator & { canShare?: (data: ShareData) => boolean };
-    // 手机上先走系统分享面板，方便直接存到“文件”或发给自己。
-    if (typeof nav.share === "function" && nav.canShare?.({ files: [file] })
-      && window.matchMedia?.("(pointer: coarse)").matches) {
-      try {
-        await nav.share({ files: [file], title: fileName });
-        return;
-      } catch (error) {
-        if ((error as Error)?.name === "AbortError") return;
-      }
-    }
-    const url = URL.createObjectURL(file);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = fileName;
-    link.rel = "noopener";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 4000);
+    await saveFile(new Blob([blob], { type: "application/pdf" }), FILE_NAMES[variant]);
   } catch {
-    if (!disposed) downloadError.value = "成绩单暂时导出失败，请稍后重试，或到学校教务系统原站导出。";
+    if (!disposed) {
+      downloadError.value = variant === "jwxt"
+        ? "教务系统的成绩单暂时导出失败，请稍后重试。"
+        : "电子证明平台暂时没有生成成绩单。可以稍后重试，或直接前往平台办理。";
+    }
   } finally {
-    if (!disposed) busy.value = false;
+    if (!disposed) busy.value = "";
   }
 }
 </script>
@@ -109,22 +119,43 @@ async function download() {
 
 .transcript {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px 16px;
+  flex-direction: column;
+  gap: 12px;
   padding: 14px;
   border: 1px solid var(--cpu-border-soft);
   border-radius: var(--cpu-radius-l);
   background: var(--cpu-card);
 }
-.transcript-text { min-width: 0; flex: 1 1 240px; }
-.transcript-text b { color: var(--cpu-text); font-size: var(--cpu-fs-m); font-weight: 500; }
-.transcript-text p { margin: 4px 0 0; color: var(--cpu-text-secondary); font-size: var(--cpu-fs-xs); line-height: 1.6; }
-.transcript :deep(.el-button) { margin: 0; }
+// 沿用原先成绩页“服务推荐”卡片的主色描边。
+.transcript.is-primary { border-color: color-mix(in srgb, var(--cpu-primary) 30%, var(--cpu-border-soft)); }
+.transcript-kicker { display: block; color: var(--cpu-primary); font-size: var(--cpu-fs-xs); font-weight: 500; }
+.transcript-text b { display: block; margin-top: 2px; color: var(--cpu-text); font-size: var(--cpu-fs-m); font-weight: 500; }
+.transcript-text p { margin: 4px 0 0; color: var(--cpu-text-secondary); font-size: var(--cpu-fs-xs); line-height: 1.7; }
+.transcript-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.transcript-actions :deep(.el-button) { margin: 0; }
+.transcript-link {
+  margin-left: auto;
+  color: var(--cpu-primary);
+  font-size: var(--cpu-fs-s);
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.transcript-link:hover { text-decoration: underline; }
+.text-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--cpu-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.text-button:hover:not(:disabled) { text-decoration: underline; }
+.text-button:disabled { color: var(--cpu-text-muted); cursor: default; }
 
 @media (max-width: 480px) {
   .grade-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .transcript :deep(.el-button) { width: 100%; }
+  .transcript-actions :deep(.el-button) { flex: 1 1 calc(50% - 5px); }
+  .transcript-link { width: 100%; margin-left: 0; text-align: center; }
 }
 </style>

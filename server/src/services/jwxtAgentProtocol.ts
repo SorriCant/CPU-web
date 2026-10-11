@@ -12,7 +12,7 @@ export const JWXT_AGENT_PROTOCOL_VERSION = 2;
  * 协议号不变的前提下后加的动作。Agent 在握手时报出自己认得哪些，
  * 主服务据此在后台标出“这个节点还不支持什么”，而不是等用户撞上报错。
  */
-export const JWXT_AGENT_FEATURES = ["jwxt.records", "agent.update-status"] as const;
+export const JWXT_AGENT_FEATURES = ["jwxt.records", "agent.update-status", "jwxt.records.ecert-and-classes"] as const;
 export type JwxtAgentFeature = typeof JWXT_AGENT_FEATURES[number];
 
 export type JwxtAgentActionMap = {

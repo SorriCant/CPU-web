@@ -51,7 +51,35 @@
         </span>
       </div>
 
-      <el-empty v-if="!groups.length" description="这个时段没有空闲的教室，换个时段或教学楼试试" />
+      <div class="rooms-refine">
+        <label class="filter-field">
+          <span class="lbl">座位</span>
+          <el-select v-model="minSeats" size="small" aria-label="最少座位数">
+            <el-option :value="0" label="不限" />
+            <el-option v-for="count in seatOptions" :key="count" :value="count" :label="`${count} 座以上`" />
+          </el-select>
+        </label>
+        <label class="filter-field">
+          <span class="lbl">类型</span>
+          <el-select v-model="roomType" size="small" clearable placeholder="全部" aria-label="教室类型">
+            <el-option v-for="item in types" :key="item" :value="item" :label="item" />
+          </el-select>
+        </label>
+        <label class="filter-field">
+          <span class="lbl">排序</span>
+          <el-select v-model="sortMode" size="small" aria-label="排序方式">
+            <el-option value="building" label="按教学楼" />
+            <el-option value="free" :label="selectedSlots.length ? '空得最久的在前' : '空闲时段多的在前'" />
+            <el-option value="seats" label="座位多的在前" />
+          </el-select>
+        </label>
+        <label class="filter-field">
+          <span class="lbl">教室号</span>
+          <el-input v-model.trim="keyword" size="small" clearable placeholder="例如 E1" aria-label="教室号" />
+        </label>
+      </div>
+
+      <el-empty v-if="!groups.length" :description="emptyText" />
       <section v-for="group in groups" :key="group.name" class="sem-block">
         <div class="sem-head">
           <h3>{{ group.name }}</h3>
@@ -92,10 +120,13 @@ import {
   freeUntil,
   groupRoomsByBuilding,
   roomBuildings,
+  roomTypes,
+  sortRooms,
   shanghaiClock,
   shanghaiDate,
   type FreeRoom,
   type FreeRoomSlot,
+  type RoomSort,
 } from "./recordCards";
 import { useRecord } from "./useRecord";
 
@@ -119,6 +150,11 @@ const quickDates = [
 const date = ref(today);
 const building = ref("");
 const selectedSlots = ref<number[]>([]);
+const minSeats = ref(0);
+const roomType = ref("");
+const sortMode = ref<RoomSort>("building");
+const keyword = ref("");
+const seatOptions = [50, 100, 150, 200];
 let slotsPickedFor = "";
 
 const data = computed(() => state.data);
@@ -129,17 +165,36 @@ const slotTitles = computed(() => (data.value?.slots ?? []).map((slot) => (
   /大节/.test(slot.name) || !slot.name ? `${slot.periods} 节` : slot.name
 )));
 const slotOrderText = computed(() => slotTitles.value.map((title) => title.replace(" 节", "")).join("、"));
+const types = computed(() => roomTypes(data.value?.rooms ?? []));
 const visibleRooms = computed(() => filterRooms(data.value?.rooms ?? [], {
   building: building.value,
   slots: selectedSlots.value,
+  minSeats: minSeats.value,
+  type: roomType.value,
+  keyword: keyword.value,
 }));
 const visibleCount = computed(() => visibleRooms.value.length);
-const groups = computed(() => groupRoomsByBuilding(visibleRooms.value));
+const groups = computed(() => {
+  if (sortMode.value === "building") return groupRoomsByBuilding(visibleRooms.value);
+  if (!visibleRooms.value.length) return [];
+  const lastPicked = selectedSlots.value.length ? selectedSlots.value[selectedSlots.value.length - 1] : -1;
+  const label = sortMode.value === "seats"
+    ? "座位多的在前"
+    : lastPicked >= 0 ? "空得最久的在前" : "空闲时段多的在前";
+  // 不按楼排的时候所有教室放在一组里，顺序就是排序结果。
+  return [{ name: label, rooms: sortRooms(visibleRooms.value, sortMode.value, data.value?.slots ?? [], lastPicked) }];
+});
+const emptyText = computed(() => (
+  minSeats.value || roomType.value || keyword.value
+    ? "没有符合筛选条件的教室，放宽座位、类型或教室号再看看"
+    : "这个时段没有空闲的教室，换个时段或教学楼试试"
+));
 
 watch(data, (next) => {
   if (!next) return;
   date.value = next.date;
   if (building.value && !buildings.value.includes(building.value)) building.value = "";
+  if (roomType.value && !types.value.includes(roomType.value)) roomType.value = "";
   if (slotsPickedFor === next.date) return;
   slotsPickedFor = next.date;
   // 查今天时默认选中正在进行或马上开始的时段；其他日期先看全天。
@@ -254,6 +309,13 @@ function barLabel(room: FreeRoom) {
 .slot-btn.active b { color: var(--cpu-primary); }
 
 .rooms-filter { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.rooms-refine { display: grid; grid-template-columns: repeat(4, minmax(0, 190px)); gap: 10px; }
+.filter-field { display: flex; min-width: 0; flex-direction: column; gap: 5px; }
+.filter-field :deep(.el-select),
+.filter-field :deep(.el-input) { width: 100%; }
+.filter-field :deep(.el-select .el-select__wrapper),
+.filter-field :deep(.el-input .el-input__wrapper) { min-height: 36px; }
+.lbl { color: var(--cpu-text-secondary); font-size: var(--cpu-fs-xs); }
 .rooms-count { color: var(--cpu-text-secondary); font-size: var(--cpu-fs-s); }
 .rooms-count b { color: var(--cpu-primary); font-size: var(--cpu-fs-m); font-weight: 500; }
 
@@ -308,5 +370,8 @@ function barLabel(room: FreeRoom) {
 
 @media (min-width: 1000px) {
   .slot-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .rooms-refine { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 }
 </style>

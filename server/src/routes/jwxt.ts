@@ -39,7 +39,7 @@ import {
   isRecognizableUndergraduateSchedule,
 } from "../services/academicIdentityDetection";
 import { I_SERVICE_ICON_PATH_PATTERN } from "../services/jwxtClient";
-import { jwxtRecordsArgsSchema, shanghaiToday } from "../services/jwxtRecords";
+import { JWXT_TRANSCRIPT_VARIANTS, jwxtRecordsArgsSchema, shanghaiToday } from "../services/jwxtRecords";
 import {
   beginLogin,
   submitLogin,
@@ -890,6 +890,9 @@ jwxtRouter.get("/records", securityRateLimit("jwxt-records", 90, 60_000), async 
       date: queryText(req.query.date),
       scope: queryText(req.query.scope),
       keyword: queryText(req.query.keyword),
+      grade: queryText(req.query.grade),
+      major: queryText(req.query.major),
+      classId: queryText(req.query.classId),
     });
     if (!parsedArgs.success || parsedArgs.data.kind === "transcript") throw Errors.badRequest("不支持的教务数据类型");
     const args = parsedArgs.data.kind === "free-rooms"
@@ -906,6 +909,9 @@ jwxtRouter.get("/records", securityRateLimit("jwxt-records", 90, 60_000), async 
         args.date || "_",
         args.scope || "_",
         args.keyword || "_",
+        args.grade || "_",
+        args.major || "_",
+        args.classId || "_",
       ],
       args.kind === "free-rooms" ? JWXT_FREE_ROOMS_CACHE_TTL_MS : JWXT_RECORDS_CACHE_TTL_MS,
       async () => getRecords(t, args),
@@ -916,12 +922,17 @@ jwxtRouter.get("/records", securityRateLimit("jwxt-records", 90, 60_000), async 
   } catch (e) { next(e); }
 });
 
-/** 学校教务导出的成绩单 PDF；每次现取，不进缓存。 */
+/**
+ * 成绩单 PDF；每次现取，不进缓存。
+ * 默认给电子证明平台的中文预览件，variant=ecert-en 是英文，variant=jwxt 是教务系统导出的版本。
+ */
 jwxtRouter.get("/transcript.pdf", securityRateLimit("jwxt-transcript", 6, 60_000), async (req, res, next) => {
   try {
     const t = getToken(req);
     if (!t) throw Errors.unauthorized("请先登录教务系统");
-    const result = await getRecords(t, { kind: "transcript" });
+    const variant = z.enum(JWXT_TRANSCRIPT_VARIANTS).safeParse(queryText(req.query.variant) ?? "ecert-zh");
+    if (!variant.success) throw Errors.badRequest("不支持的成绩单类型");
+    const result = await getRecords(t, { kind: "transcript", variant: variant.data });
     if (result.kind !== "transcript") throw Errors.server("成绩单导出失败");
     const body = Buffer.from(result.file.dataBase64, "base64");
     if (body.length !== result.file.byteLength || body.subarray(0, 5).toString("latin1") !== "%PDF-") {
