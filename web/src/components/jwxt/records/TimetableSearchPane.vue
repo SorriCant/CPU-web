@@ -1,17 +1,7 @@
 <template>
   <RecordShell :loading="loading" :error="error" :refreshable="hasResult" @refresh="refresh">
     <template #controls>
-      <div class="seg" role="group" aria-label="检索范围">
-        <button
-          v-for="item in scopes"
-          :key="item.value"
-          type="button"
-          class="seg-btn"
-          :class="{ active: scope === item.value }"
-          :aria-pressed="scope === item.value"
-          @click="scope = item.value"
-        >{{ item.label }}</button>
-      </div>
+      <SegSwitch v-model="scope" :options="scopes" label="检索范围" stretch />
       <label v-if="semesterOptions.length > 1" class="filter-field is-term">
         <el-select :model-value="semester" size="small" aria-label="学期" :disabled="loading" @change="onSemesterChange">
           <el-option v-for="item in semesterOptions" :key="item.value" :value="item.value" :label="item.label" />
@@ -60,40 +50,63 @@
       <b>{{ filtered.length }}</b> 节<template v-if="filtered.length !== totalCount"> / 共 {{ totalCount }}</template>
     </template>
 
-    <div v-if="rows.length" class="refine-row">
-      <label class="filter-field">
-        <span class="lbl">星期</span>
-        <el-select v-model="weekday" size="small" clearable placeholder="全部" aria-label="星期">
-          <el-option v-for="day in weekdays" :key="day" :value="day" :label="day" />
-        </el-select>
-      </label>
-      <label class="filter-field">
-        <span class="lbl">周次</span>
-        <el-select v-model="week" size="small" clearable placeholder="全部周" aria-label="周次">
-          <el-option v-for="item in 20" :key="item" :value="item" :label="`第 ${item} 周`" />
-        </el-select>
-      </label>
-      <el-button size="small" :icon="Download" :disabled="!filtered.length" @click="exportCsv">导出表格</el-button>
-    </div>
-
     <p v-if="scope !== 'class' && search.state.data?.truncated" class="record-tip">
       结果较多，先取了前 {{ search.state.data.list.length }} 条；把关键词写得更具体可以缩小范围。
     </p>
-    <RecordCardList v-if="hasResult" :groups="groups" :empty-text="rows.length ? '没有符合筛选条件的课' : emptyText" />
-    <el-empty v-else-if="!loading && !error" :image-size="88" :description="hintText" />
+
+    <!-- 课表视图：切换、翻周和导出在同一行，下面是和“我的课表”一样的周网格。 -->
+    <TimetableGrid
+      v-if="rows.length && view === 'grid'"
+      :rows="rows"
+      :calendar="term.calendar.value"
+      :pending="!term.settled.value"
+      :owner-label="ownerLabel"
+      :with-classes="scope !== 'class'"
+    >
+      <template #lead>
+        <SegSwitch :model-value="view" :options="views" label="显示方式" @update:model-value="setView" />
+      </template>
+      <template #trail>
+        <el-button class="export-btn" size="small" :icon="Download" @click="exportCsv">导出表格</el-button>
+      </template>
+    </TimetableGrid>
+    <template v-else>
+      <div v-if="rows.length" class="refine-row">
+        <SegSwitch :model-value="view" :options="views" label="显示方式" @update:model-value="setView" />
+        <label class="filter-field">
+          <span class="lbl">星期</span>
+          <el-select v-model="weekday" size="small" clearable placeholder="全部" aria-label="星期">
+            <el-option v-for="day in weekdays" :key="day" :value="day" :label="day" />
+          </el-select>
+        </label>
+        <label class="filter-field">
+          <span class="lbl">周次</span>
+          <el-select v-model="week" size="small" clearable placeholder="全部周" aria-label="周次">
+            <el-option v-for="item in 20" :key="item" :value="item" :label="`第 ${item} 周`" />
+          </el-select>
+        </label>
+        <el-button class="export-btn" size="small" :icon="Download" :disabled="!filtered.length" @click="exportCsv">导出表格</el-button>
+      </div>
+      <RecordCardList v-if="hasResult" :groups="groups" :empty-text="rows.length ? '没有符合筛选条件的课' : emptyText" />
+      <el-empty v-else-if="!loading && !error" :image-size="88" :description="hintText" />
+    </template>
   </RecordShell>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { Download, Search } from "@element-plus/icons-vue";
 import RecordCardList from "./RecordCardList.vue";
 import RecordShell from "./RecordShell.vue";
+import SegSwitch from "./SegSwitch.vue";
+import TimetableGrid from "./TimetableGrid.vue";
 import { WEEKDAYS, filterTimetable, timetableCsv, timetableDayGroups, type TimetableRow } from "./recordCards";
 import { saveFile } from "./saveFile";
 import { useRecord } from "./useRecord";
+import { useTermCalendar } from "./useTermCalendar";
 
 type Scope = "course" | "teacher" | "classroom" | "class";
+type View = "grid" | "list";
 interface Option { value: string; label: string }
 
 const props = withDefaults(defineProps<{ active?: boolean }>(), { active: false });
@@ -105,7 +118,40 @@ const scopes: Array<{ value: Scope; label: string; placeholder: string }> = [
   { value: "class", label: "班级", placeholder: "" },
 ];
 const weekdays = WEEKDAYS;
+const views: Array<{ value: View; label: string }> = [
+  { value: "grid", label: "课表" },
+  { value: "list", label: "列表" },
+];
+const VIEW_STORAGE_KEY = "cpu-jwxt-timetable-view-v1";
+// 一个班、一位老师、一间教室的排课排成课表最好读；按课程名查出来的是很多个班的课，
+// 同一时间会叠好几门，默认还是列表。自己切换过就按切换后的来。
+const DEFAULT_VIEWS: Record<Scope, View> = { class: "grid", teacher: "grid", classroom: "grid", course: "list" };
+
+function readStoredViews(): Partial<Record<Scope, View>> {
+  try {
+    const stored = JSON.parse(localStorage.getItem(VIEW_STORAGE_KEY) || "{}");
+    const picked: Partial<Record<Scope, View>> = {};
+    for (const key of Object.keys(DEFAULT_VIEWS) as Scope[]) {
+      if (stored?.[key] === "grid" || stored?.[key] === "list") picked[key] = stored[key];
+    }
+    return picked;
+  } catch {
+    return {};
+  }
+}
+
+const chosenViews = reactive<Partial<Record<Scope, View>>>(readStoredViews());
 const scope = ref<Scope>("course");
+const view = computed<View>(() => chosenViews[scope.value] ?? DEFAULT_VIEWS[scope.value]);
+
+function setView(value: View) {
+  chosenViews[scope.value] = value;
+  try {
+    localStorage.setItem(VIEW_STORAGE_KEY, JSON.stringify(chosenViews));
+  } catch {
+    /* 存不下只影响下次打开 */
+  }
+}
 const keyword = ref("");
 const grade = ref("");
 const major = ref("");
@@ -134,7 +180,16 @@ const rows = computed<TimetableRow[]>(() => (hasResult.value ? current.value.sta
 const totalCount = computed(() => (
   scope.value === "class" ? rows.value.length : search.state.data?.total ?? rows.value.length
 ));
-const filtered = computed(() => filterTimetable(rows.value, { week: week.value || null, weekday: weekday.value }));
+// 星期、周次两个筛选只在列表里有；课表视图自己翻周，导出的是全部排课。
+const filtered = computed(() => (
+  view.value === "grid" ? rows.value : filterTimetable(rows.value, { week: week.value || null, weekday: weekday.value })
+));
+const term = useTermCalendar(() => semester.value, () => props.active && view.value === "grid");
+const ownerLabel = computed(() => (
+  scope.value === "class"
+    ? `${klass.state.data?.className || "班级"} 的课表`
+    : `“${search.state.data?.keyword || keyword.value}”的检索结果`
+));
 const groups = computed(() => {
   const days = timetableDayGroups(filtered.value);
   // 没有结果时也给一组，让列表显示空状态。
@@ -213,32 +268,6 @@ async function exportCsv() {
 </script>
 
 <style scoped lang="scss">
-.seg {
-  display: inline-flex;
-  gap: 2px;
-  padding: 3px;
-  border: 1px solid var(--cpu-border-soft);
-  border-radius: var(--cpu-radius-m);
-  background: var(--cpu-surface-subtle);
-}
-.seg-btn {
-  height: 30px;
-  padding: 0 14px;
-  border: 0;
-  border-radius: var(--cpu-radius-s);
-  background: transparent;
-  color: var(--cpu-text-secondary);
-  font: inherit;
-  font-size: var(--cpu-fs-s);
-  font-weight: 500;
-  line-height: 1;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-.seg-btn:hover { color: var(--cpu-primary); }
-.seg-btn.active { background: var(--cpu-card); color: var(--cpu-primary); }
-.seg-btn:focus-visible { outline: 2px solid var(--cpu-primary-soft); outline-offset: 2px; }
-
 .search-form { display: flex; min-width: 0; flex: 1 1 300px; gap: 8px; }
 .search-form :deep(.el-input) { min-width: 0; flex: 1; }
 .search-form :deep(.el-input__wrapper) { min-height: 38px; }
@@ -251,13 +280,11 @@ async function exportCsv() {
 .lbl { color: var(--cpu-text-secondary); font-size: var(--cpu-fs-xs); }
 
 .refine-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
-.refine-row .filter-field :deep(.el-select .el-select__wrapper) { min-height: 36px; }
-.refine-row :deep(.el-button) { height: 36px; margin: 0 0 0 auto; }
+.refine-row .filter-field :deep(.el-select .el-select__wrapper) { min-height: 38px; }
+.export-btn { height: 38px; margin: 0 0 0 auto; }
 .record-tip { margin: 0; color: var(--cpu-text-secondary); font-size: var(--cpu-fs-xs); line-height: 1.7; }
 
 @media (max-width: 640px) {
-  .seg { display: grid; width: 100%; grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .seg-btn { padding: 0 4px; }
   .filter-field { flex: 1 1 calc(50% - 5px); }
   .filter-field.is-wide { flex-basis: 100%; }
 }
