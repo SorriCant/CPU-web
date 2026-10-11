@@ -17,7 +17,9 @@ export function assertEOConfig(config) {
   // These bounds are the existing deployment's settings, not silent overrides.
   // The user approved 4s per request for this EO adapter on 2026-10-08.
   // Asset checks: 2 * (4s page + 4s concurrent assets) + 3s retry = 19s.
-  if (config.checks.length > 10 || config.checks.some(c => c.intervalSeconds !== 60 || c.timeoutMs > 4000 || c.retryDelayMs > 3000)) {
+  // The eleventh check (assistant) reads the /api/ready response the others
+  // already share, so it adds a verdict without adding a request.
+  if (config.checks.length > 11 || config.checks.some(c => c.intervalSeconds !== 60 || c.timeoutMs > 4000 || c.retryDelayMs > 3000)) {
     throw new Error('EO_TIMING_CONFIG_REQUIRES_REVIEW');
   }
   if (new Set(config.notify.map(c => c.name)).size !== config.notify.length) throw new Error('NOTIFICATION_NAMES_MUST_BE_UNIQUE');
@@ -78,8 +80,8 @@ async function persistBatch(store, checkpoint, batch, config) {
 async function recoverPending(store, checkpoint, config) {
   const pending = await readJSON(store, PENDING_KEY);
   if (!pending) return checkpoint;
-  // An interrupted previous deployment may contain nine checks. Replay it before
-  // adding the new JWXT check; never discard its durable historical samples.
+  // An interrupted previous deployment may predate the newest check. Replay it
+  // before that check starts; never discard its durable historical samples.
   if (!Number.isInteger(pending.slot) || !Array.isArray(pending.samples) || !pending.samples.length || new Set(pending.samples.map(s => s.id)).size !== pending.samples.length || pending.samples.some(s => !config.checks.some(c => c.id === s.id))) throw new Error('INVALID_PENDING_BATCH');
   if (pending.slot <= checkpoint.lastSlot) {
     await store.delete(PENDING_KEY);

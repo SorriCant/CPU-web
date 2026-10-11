@@ -51,6 +51,11 @@ test("numeric thresholds, a degraded rule and a detail line are accepted togethe
   const agents = (await loadConfig(examplePath)).checks.find((item) => item.id === "jwxt-agent");
   assert.deepEqual(agents.expect.jsonMin, { "data.jwxtAgents.online": 1 });
   assert.equal(agents.critical, false);
+
+  // 拾间 AI 用取值相等的降级规则：主线路不可用但还有备用线路时算降级。
+  const assistant = (await loadConfig(examplePath)).checks.find((item) => item.id === "assistant");
+  assert.deepEqual(assistant.expect.jsonMin, { "data.assistantUpstreams.online": 1 });
+  assert.deepEqual(assistant.degraded.json, { "data.assistantUpstreams.primaryOnline": true });
 });
 
 test("mistakes are rejected with a message that names the field", () => {

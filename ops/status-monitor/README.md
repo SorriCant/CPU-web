@@ -18,6 +18,7 @@
 | 数据服务 | `GET /api/ready`，要求 `data.ready` 为真 | 主要服务；覆盖数据库、缓存和教务网关，同时读取主站当前版本 |
 | 论坛 | `GET /api/boards` | 一次真实的数据库读取 |
 | 教务 Agent | `GET /api/ready`，读取 `data.jwxtAgents` | 显示在线台数；全部离线算中断，只掉了一部分算降级 |
+| 拾间 AI | `GET /api/ready`，读取 `data.assistantUpstreams` | 显示可用线路数；全部不可用算中断，主线路不可用但备用线路还在算降级 |
 | 药苑之声 | `GET /voicehub/` | 独立的 Nuxt 服务 |
 | QQ 机器人 | `GET /api/ready`，要求 `data.qqbot.connected` 为真 | |
 | www.cputime.cn、cpu.lizmt.cn | `GET /api/health` | 其他入口域名 |
@@ -225,6 +226,8 @@ node bin/status-monitor.mjs --config config.json --test-notify
 - 只有一个探测点。监控机到主站之间的线路故障会被当成主站故障；监控机整体断网能识别出来并跳过。
 - 教务 Agent 的在线数来自主站 `/api/ready` 的 `data.jwxtAgents`（只有 `total` 和 `online` 两个数字，口径是已启用且承担教务的 Agent）。主站版本早于这个字段时，该检查项会显示“未取得状态数据”。
 - 示例配置里“少于 2 台在线算降级”是按两台 Agent 写的，增减 Agent 后要改 `degraded.jsonMin`；“全部离线算中断”假定教务只走 Agent，如果开启了主站本机直连教务，这条规则要相应调整。
+- 拾间 AI 的线路数来自主站 `/api/ready` 的 `data.assistantUpstreams`（`total`、`online` 两个数字和 `primaryOnline`，口径是拾间 AI 的主服务加上已配置的回退服务）。“可用”指主站读得到该服务的模型目录、并且目录里有要用的模型，不发起真实对话，所以上游欠费或限流这类只在生成时才暴露的问题探测不到；生图、联网搜索和各服务自己的额度也不在其中。主站约每 30 秒重新探测一次，状态页上看到的会晚一轮。主站版本早于这个字段，或进程刚启动还没有探测结果时，该检查项会显示“未取得状态数据”。
+- 后台关闭 AI 总开关时可用线路为 0，状态页会显示中断。
 - 学校教务系统本身是否可用不在探测范围内。
 - 监控停机期间没有数据，状态页上对应的日期显示为“无数据”。
 

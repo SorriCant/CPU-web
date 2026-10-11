@@ -37,24 +37,24 @@ function fixture(overrides = {}) {
   return {store, options, advance: ms => clock += ms, tick: () => runTick(options)};
 }
 
-test('all ten checks use the approved 4s timeout, retaining 3s retry and 60s interval', async () => {
+test('all eleven checks use the approved 4s timeout, retaining 3s retry and 60s interval', async () => {
   const f = fixture(); const seen = [];
   f.options.probe = async check => { seen.push(check.id); assert.equal(check.timeoutMs,4000); assert.equal(check.retryDelayMs,3000); assert.equal(check.intervalSeconds,60); return clone(up); };
-  assert.equal((await f.tick()).checks,10);
+  assert.equal((await f.tick()).checks,11);
   assert.deepEqual(seen, config.checks.map(c=>c.id));
   const saved=await loadCheckpoint(f.store);
   assert.equal(saved.state.release.value,'abc123');
-  assert.equal(Object.keys(saved.state.checks).length,10);
+  assert.equal(Object.keys(saved.state.checks).length,11);
   assert.ok(saved.state.certificates['cputime.cn']);
 });
 
 test('retry preserves two consecutive failures, one incident, then immediate recovery', async () => {
   const f=fixture({probe:async()=>clone(down)}); let count=0;
   f.options.probe=async()=>{count++;return clone(down)};
-  await f.tick(); assert.equal(count,20);
+  await f.tick(); assert.equal(count,22);
   assert.equal((await loadCheckpoint(f.store)).state.incidents.length,0);
   f.advance(60000); await f.tick();
-  assert.equal((await loadCheckpoint(f.store)).state.incidents.length,10);
+  assert.equal((await loadCheckpoint(f.store)).state.incidents.length,11);
   f.advance(60000); f.options.probe=async()=>clone(up); await f.tick();
   const state=(await loadCheckpoint(f.store)).state;
   assert.equal(state.checks.web.status,'up'); assert.ok(state.incidents.every(i=>i.resolvedAt));
@@ -127,8 +127,8 @@ test('failed notifications remain in the durable outbox, acknowledged deliveries
   f.options.config.notify=[{name:'test',events:['down','recovered'],format:'generic',url:'https://example.invalid'}];
   f.options.send=async()=>[{ok:false}];
   await f.tick();f.advance(60000);await f.tick();
-  assert.equal((await loadCheckpoint(f.store)).outbox.length,10);
-  f.options.send=async(_channel,events)=>{assert.equal(events.length,10);return [{ok:true}]};
+  assert.equal((await loadCheckpoint(f.store)).outbox.length,11);
+  f.options.send=async(_channel,events)=>{assert.equal(events.length,11);return [{ok:true}]};
   f.advance(60000);await f.tick();assert.equal((await loadCheckpoint(f.store)).outbox.length,0);
 });
 
@@ -144,7 +144,7 @@ test('public routes show real state without exposing probe config, secrets or in
   const handler=createHandler({config,getStore:()=>f.store,now:()=>start,secret:'secret-never-public'.repeat(3)});
   const response=await handler(new Request('https://status.example/api/status'),'status');
   const body=await response.text();assert.equal(response.status,200);
-  assert.equal(JSON.parse(body).groups.flatMap(g=>g.checks).length,10);
+  assert.equal(JSON.parse(body).groups.flatMap(g=>g.checks).length,11);
   assert.doesNotMatch(body,/api\/ready|api\/boards|Authorization|secret-never-public|retentionDay|outbox/);
   const html=await handler(new Request('https://status.example/'),'page');
   assert.match(await html.text(),/所有服务运行正常/);
@@ -162,20 +162,20 @@ test('storage outages return 503 instead of an empty healthy status page',async(
   assert.equal(response.status,503);assert.doesNotMatch(await response.text(),/private|secret/);
 });
 
-test('upgrade replays an interrupted nine-check batch without losing history',async()=>{
+test('upgrade replays an interrupted batch from before the newest check without losing history',async()=>{
   const f=fixture();
-  f.options.config.checks=f.options.config.checks.filter(c=>c.id!=='jwxt-agent');
+  f.options.config.checks=f.options.config.checks.filter(c=>c.id!=='assistant');
   f.store.failKey=STATE_KEY;
   await assert.rejects(f.tick(),/simulated/);
   f.options.config=clone(config);
   assert.equal((await f.tick()).code,'already_recorded');
   let cp=await loadCheckpoint(f.store);
   assert.equal(Object.values(cp.state.checks.web.days)[0].up,1);
-  assert.equal(cp.state.checks['jwxt-agent'],undefined);
+  assert.equal(cp.state.checks.assistant,undefined);
   f.advance(60000);await f.tick();
   cp=await loadCheckpoint(f.store);
   assert.equal(Object.values(cp.state.checks.web.days)[0].up,2);
-  assert.equal(Object.values(cp.state.checks['jwxt-agent'].days)[0].up,1);
+  assert.equal(Object.values(cp.state.checks.assistant.days)[0].up,1);
 });
 
 test('actual execution region is persisted and exposed without using visitor geography',async()=>{

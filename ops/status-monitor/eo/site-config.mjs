@@ -117,6 +117,29 @@ export default {
           "detail": "在线 {data.jwxtAgents.online}/{data.jwxtAgents.total} 台"
         },
         {
+          "id": "assistant",
+          "name": "拾间 AI",
+          "description": "对话使用的模型服务",
+          "url": "https://cputime.cn/api/ready",
+          "expect": {
+            "status": [
+              200,
+              503
+            ],
+            "jsonMin": {
+              "data.assistantUpstreams.online": 1
+            }
+          },
+          "failureText": "模型服务全部不可用",
+          "degraded": {
+            "json": {
+              "data.assistantUpstreams.primaryOnline": true
+            },
+            "text": "主线路不可用"
+          },
+          "detail": "可用线路 {data.assistantUpstreams.online}/{data.assistantUpstreams.total}"
+        },
+        {
           "id": "voicehub",
           "name": "药苑之声",
           "url": "https://cputime.cn/voicehub/",

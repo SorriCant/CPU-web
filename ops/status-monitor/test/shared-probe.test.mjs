@@ -4,25 +4,28 @@ import { createSharedProbe } from '../eo/shared-probe.mjs';
 import { normalizeConfig } from '../src/config.mjs';
 import raw from '../eo/site-config.mjs';
 
-test('ten independent verdicts use seven primary requests; asset files still checked', async () => {
+test('eleven independent verdicts use seven primary requests; asset files still checked', async () => {
   const calls = [];
   const shared = createSharedProbe({ request: async (url, options) => {
     calls.push(url);
     await new Promise(resolve => setTimeout(resolve, 5));
-    let body = JSON.stringify({code:0,data:{ok:true,ready:true,qqbot:{connected:true},jwxtAgents:{total:3,online:2}}});
+    let body = JSON.stringify({code:0,data:{ok:true,ready:true,qqbot:{connected:true},jwxtAgents:{total:3,online:2},assistantUpstreams:{total:2,online:1,primaryOnline:false}}});
     if (url.endsWith('/')) body = '<div id="app">药苑之声</div><script src="/main.js"></script><link rel="stylesheet" href="/main.css">';
     return {status:200,body,url,certificates:[],headers:{'content-type':url.endsWith('.css')?'text/css':'text/javascript'}};
   }});
   const config = normalizeConfig(raw);
   const results = await Promise.all(config.checks.map(shared.probe));
-  assert.equal(results.length,10);
-  assert.ok(results.every(r=>r.outcome==='up'));
+  assert.equal(results.length,11);
+  assert.ok(results.every((r,i)=>r.outcome===(config.checks[i].id==='assistant'?'slow':'up')));
   assert.equal(results[config.checks.findIndex(c=>c.id==='jwxt-agent')].detail,'在线 2/3 台');
+  const assistant=results[config.checks.findIndex(c=>c.id==='assistant')];
+  assert.equal(assistant.detail,'可用线路 1/2');
+  assert.equal(assistant.reason,'主线路不可用');
   assert.equal(calls.filter(u=>u==='https://cputime.cn/').length,1);
   assert.equal(calls.filter(u=>u==='https://cputime.cn/api/ready').length,1);
   assert.ok(calls.includes('https://cputime.cn/main.js'));
   assert.ok(calls.includes('https://cputime.cn/main.css'));
-  assert.deepEqual(shared.stats,{requests:9,shared:3});
+  assert.deepEqual(shared.stats,{requests:9,shared:4});
 });
 
 test('settled failures and content failures are never cached for retries', async () => {
