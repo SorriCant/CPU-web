@@ -25,20 +25,22 @@ export const TOMATO_NOODLE_RULES = {
   stepIntroMs: 450,
   stepResultMs: 650,
   serveMs: 900,
-  sweepPasses: 6,
-  sweepSecondsBase: 1.5,
-  sweepSecondsDecay: 0.93,
-  sweepSecondsMin: 0.62,
-  fillSecondsBase: 3.4,
-  fillSecondsDecay: 0.94,
-  fillSecondsMin: 1.5,
-  zoneDecay: 0.96,
-  perfectHalf: 0.045,
-  perfectHalfMin: 0.022,
-  goodHalf: 0.1,
-  goodHalfMin: 0.045,
-  okHalf: 0.17,
-  okHalfMin: 0.075,
+  sweepPasses: 4,
+  sweepSecondsBase: 1.25,
+  sweepSecondsDecay: 0.89,
+  sweepSecondsMin: 0.5,
+  fillSecondsBase: 2.3,
+  fillSecondsDecay: 0.91,
+  fillSecondsMin: 1,
+  // 火候条越烧越快：位置 = 进度的 fillCurve 次方，前段给出预判时间，临近目标时最急。
+  fillCurve: 1.8,
+  zoneDecay: 0.94,
+  perfectHalf: 0.04,
+  perfectHalfMin: 0.02,
+  goodHalf: 0.09,
+  goodHalfMin: 0.04,
+  okHalf: 0.15,
+  okHalfMin: 0.07,
   perfectPoints: 3,
   goodPoints: 2,
   okPoints: 1,
@@ -162,8 +164,8 @@ export function noodleTargetCenter(step: NoodleStep, random: number) {
 export function noodleGaugePosition(step: NoodleStep, level: number, seconds: number) {
   const elapsed = Math.max(0, seconds);
   if (step.gauge === "fill") {
-    const progress = elapsed / noodleFillSeconds(level);
-    return { position: Math.min(1, progress), expired: progress >= 1 };
+    const progress = Math.min(1, elapsed / noodleFillSeconds(level));
+    return { position: progress ** TOMATO_NOODLE_RULES.fillCurve, expired: progress >= 1 };
   }
   const passes = elapsed / noodleSweepSeconds(level);
   const phase = passes % 2;
