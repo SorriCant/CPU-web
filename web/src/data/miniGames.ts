@@ -4,7 +4,7 @@ export interface MiniGame {
   summary: string;
   routeName: string;
   cover: string;
-  hue: "blue" | "orange";
+  hue: "blue" | "orange" | "green";
   tags: string[];
   /** 本机最高分的 localStorage 键；合集页的“我的最高”取它和云端最高分里较大的一个。 */
   bestStorageKey: string;
@@ -38,5 +38,16 @@ export const miniGames: MiniGame[] = [
     tags: ["全校排行", "14 枚成就"],
     bestStorageKey: "cpu-web:tomato-egg-noodles:v1:best",
     leaderboardPath: "/tools/tomato-egg-noodles/leaderboard",
+  },
+  {
+    slug: "zombie-defense",
+    name: "药大人大战僵尸",
+    summary: "种药材守药圃，一只僵尸都不能放过去",
+    routeName: "service-zombie-defense",
+    cover: "🧟",
+    hue: "green",
+    tags: ["全校排行", "14 枚成就"],
+    bestStorageKey: "cpu-web:zombie-defense:v1:best",
+    leaderboardPath: "/tools/zombie-defense/leaderboard",
   },
 ];

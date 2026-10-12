@@ -127,6 +127,7 @@ test('hidden native game routes cannot be opened directly', async () => {
     ['/services/tools/games', 'service-games'],
     ['/services/tools/yaoda-can-fly', 'service-yaoda-can-fly'],
     ['/services/tools/yaoda-can-fly/tomato-egg-noodles', 'service-tomato-egg-noodles'],
+    ['/services/tools/yaoda-can-fly/zombie-defense', 'service-zombie-defense'],
   ];
   const { guard } = loadMainRouteGuard({ hideGame: true });
   for (const [path, name] of gameRoutes) {

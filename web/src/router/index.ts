@@ -185,6 +185,7 @@ export const router = createRouter({
         { path: "services/tools/yaoda-can-fly", name: "service-yaoda-can-fly", component: () => import("@/views/services/games/YaodaCanFly.vue"), meta: { nativeChrome: "page", title: "药大人能飞", public: true, fullWidthContent: true, miniGame: true } },
         // 已发布的原生壳只对 /services/tools/yaoda-can-fly 这个前缀隐藏自己的顶栏和底栏，其他游戏页也放在它下面。
         { path: "services/tools/yaoda-can-fly/tomato-egg-noodles", name: "service-tomato-egg-noodles", component: () => import("@/views/services/games/TomatoEggNoodles.vue"), meta: { nativeChrome: "page", title: "番茄鸡蛋面", public: true, fullWidthContent: true, miniGame: true } },
+        { path: "services/tools/yaoda-can-fly/zombie-defense", name: "service-zombie-defense", component: () => import("@/views/services/games/YaodaVsZombies.vue"), meta: { nativeChrome: "page", title: "药大人大战僵尸", public: true, fullWidthContent: true, miniGame: true } },
         { path: "services/tools/voicehub", name: "service-voicehub", component: () => import("@/views/services/VoiceHubLaunch.vue"), meta: { nativeChrome: "page", title: "药苑之声", public: true, fullWidthContent: true } },
         { path: "services/tools/manage", name: "service-tools-manage", component: () => import("@/views/services/ToolManage.vue"), meta: { title: "小工具管理" } },
         { path: "services/tools/qqbot-reminders", redirect: "/messages/qqbot-reminders" },
