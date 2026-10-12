@@ -58,27 +58,42 @@
 
         <div v-if="banner" :key="banner.id" class="zd-banner" :class="{ big: banner.big }" role="status">{{ banner.text }}</div>
 
-        <div class="zd-dock">
-          <div v-if="focusInfo && !tip" class="zd-upgrade">
-            <span>
-              <b>{{ focusInfo.name }} · {{ focusInfo.level }} 级<i v-if="focusInfo.canGraft"> · 还能杂交</i></b>
-              <small v-if="focusInfo.genes">{{ focusInfo.genes }}</small>
-              <small v-if="focusInfo.perk" class="zd-perk">专属：{{ focusInfo.perk }}</small>
-              <small>{{ focusInfo.next ? `升级后：${focusInfo.next.summary}` : focusInfo.kind === "fizz" ? "一次性的，不能升级" : "已经升到头了" }}</small>
-            </span>
-            <button
-              v-if="focusInfo.next"
-              data-cpu-button="surface"
-              type="button"
-              :class="{ short: energy < focusInfo.next.cost }"
-              @click.stop="upgradeFocused"
-            >升级 {{ compact(focusInfo.next.cost) }}</button>
+        <!-- 点中一株药材：在它旁边弹出一张小卡片，写着它是什么、有哪些效果，以及升级。 -->
+        <div
+          v-if="focusInfo && popPlace && gamePhase === 'playing'"
+          class="zd-pop"
+          :class="{ below: popPlace.below }"
+          :style="popPlace.style"
+          role="group"
+          :aria-label="`${focusInfo.name}，${focusInfo.level} 级`"
+        >
+          <div class="zd-pop-head">
+            <b>{{ focusInfo.name }}</b>
+            <em>Lv{{ focusInfo.level }}</em>
           </div>
-          <p v-else class="zd-hint" :class="{ warn: Boolean(tip) }">{{ tip || selectionHint }}</p>
+          <p v-if="focusInfo.genes" class="zd-pop-genes">{{ focusInfo.genes }}</p>
+          <ul v-if="focusInfo.perks.length" class="zd-pop-perks">
+            <li v-for="perk in focusInfo.perks.slice(0, 3)" :key="perk">{{ perk }}</li>
+            <li v-if="focusInfo.perks.length > 3" class="more">还有 {{ focusInfo.perks.length - 3 }} 项效果</li>
+          </ul>
+          <p class="zd-pop-next">{{ focusInfo.next ? `升级后：${focusInfo.next.summary}` : focusInfo.kind === "fizz" ? "一次性的，不能升级" : "已经升到头了" }}</p>
+          <button
+            v-if="focusInfo.next"
+            data-cpu-button="surface"
+            type="button"
+            :class="{ short: energy < focusInfo.next.cost }"
+            @click.stop="upgradeFocused"
+          >升级<span>{{ compact(focusInfo.next.cost) }} 药力</span></button>
+          <i class="zd-pop-tail" :style="{ left: popPlace.tail }" aria-hidden="true"></i>
+        </div>
+
+        <div class="zd-dock">
+          <p class="zd-hint" :class="{ warn: Boolean(tip) }">{{ tip || selectionHint }}</p>
           <div class="zd-bar">
             <div class="zd-energy" :aria-label="`药力 ${energy}`">
-              <small>药力</small>
+              <i aria-hidden="true"></i>
               <b :class="{ long: energy >= 10000 }">{{ compact(energy) }}</b>
+              <small>药力</small>
             </div>
             <div class="zd-cards">
             <button
@@ -106,7 +121,11 @@
               :aria-pressed="selected === 'shovel'"
               @click.stop="selectCard('shovel')"
             >
-              <b aria-hidden="true">铲</b>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M19.4 4.6 11 13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
+                <path d="M17 2.6l4.4 4.4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" />
+                <path d="M8.9 10.9 13.1 15.1 8.6 19.6a3.7 3.7 0 0 1-5 .2l-.4-.4a3.7 3.7 0 0 1 .2-5z" fill="currentColor" />
+              </svg>
               <span>移除</span>
             </button>
             </div>
@@ -269,13 +288,13 @@ import {
   type ZdState,
   type ZdUnitKind,
 } from "./zombieDefenseEngine";
-import { drawZdMenuArt, drawZdScene, drawZdUnitIcon, zdCellAt, zdLayout } from "./zombieDefenseScene";
+import { drawZdMenuArt, drawZdScene, drawZdUnitIcon, zdArtReady, zdCellAt, zdLayout } from "./zombieDefenseScene";
 
 type Screen = "menu" | "game" | "ranking" | "achievements" | "history" | "settings";
 type GamePhase = "ready" | "playing" | "paused" | "over";
 type Selection = ZdUnitKind | "shovel" | null;
 type HistoryItem = { score: number; waves: number; playedAt: string };
-type FocusInfo = { lane: number; row: number; kind: ZdUnitKind; grafts: number; canGraft: boolean; name: string; genes: string | null; perk: string | null; level: number; next: ZdUpgrade | null };
+type FocusInfo = { lane: number; row: number; kind: ZdUnitKind; grafts: number; name: string; genes: string | null; perks: string[]; level: number; next: ZdUpgrade | null };
 
 const router = useRouter();
 const auth = useAuthStore();
@@ -314,12 +333,22 @@ const STORAGE_PREFIX = "cpu-web:zombie-defense:v1";
 
 let game: ZdState = createZdState(1);
 let worldHeight = 680;
+/** 对局区域在页面里的宽高（CSS 像素），用来把药圃里的格子换算成页面上的位置。 */
+const viewSize = ref({ width: 0, height: 0 });
 let lastFrameAt = 0;
 let animationFrame = 0;
 let bannerSeq = 0;
 let bannerUntil = 0;
 let tipTimer = 0;
-let lastShotToneAt = 0;
+let lastHudAt = 0;
+// 画面跟不上时把画布的清晰度降一档，见 watchFrameRate。
+const QUALITY_RATIOS = [2, 1.5, 1];
+let qualityStep = 0;
+let paceFrames = 0;
+let paceTotal = 0;
+let bestPace = 0;
+let slowWindows = 0;
+const repeatingToneAt: Record<string, number> = {};
 let resizeObserver: ResizeObserver | null = null;
 let canvasContext: CanvasRenderingContext2D | null = null;
 let audioContext: AudioContext | null = null;
@@ -336,6 +365,29 @@ const selectionHint = computed(() => {
   if (!selected.value) return "选药材种到空格里；点已种下的药材可以升级";
   const unit = ZD_UNITS[selected.value];
   return `${unit.name} · ${unit.summary}；种到别的药材上是杂交`;
+});
+/** 点中药材时那张小卡片放在哪：贴着那一格，上半场的放在格子下面，下半场的放在上面。 */
+const popPlace = computed(() => {
+  const focus = focusInfo.value;
+  const { width, height } = viewSize.value;
+  if (!focus || !width || !height) return null;
+  const scale = width / WORLD_WIDTH;
+  const layout = zdLayout(WORLD_WIDTH, height / scale);
+  const centerX = (layout.left + (focus.lane + 0.5) * layout.cellWidth) * scale;
+  const cellTop = (layout.top + focus.row * layout.cellHeight) * scale;
+  const cellBottom = cellTop + layout.cellHeight * scale;
+  const popWidth = Math.min(212, width - 16);
+  const left = Math.min(width - popWidth - 8, Math.max(8, centerX - popWidth / 2));
+  const below = focus.row < 3;
+  return {
+    below,
+    tail: `${Math.round(centerX - left)}px`,
+    style: {
+      left: `${Math.round(left)}px`,
+      width: `${popWidth}px`,
+      ...(below ? { top: `${Math.round(cellBottom + 10)}px` } : { bottom: `${Math.round(height - cellTop + 14)}px` }),
+    },
+  };
 });
 const unlockedAchievementCount = computed(() => achievements.value.filter((item) => item.unlocked).length);
 const panelTitle = computed(() => {
@@ -366,6 +418,12 @@ onMounted(() => {
     resizeCanvas();
     drawMenuArt();
   });
+  // 图是异步加载的：到齐以后把已经画出去的招牌图、药材栏图标和药圃重画一遍。
+  void zdArtReady.then(() => {
+    drawMenuArt();
+    drawIcons();
+    drawScene();
+  });
 });
 
 onBeforeUnmount(() => {
@@ -389,6 +447,11 @@ function openScreen(value: Screen) {
 function startGame() {
   cancelAnimationFrame(animationFrame);
   game = createZdState(Math.floor(Math.random() * 0x7fffffff));
+  // 新的一局从最清晰开始。
+  qualityStep = 0;
+  paceFrames = 0;
+  paceTotal = 0;
+  slowWindows = 0;
   screen.value = "game";
   gamePhase.value = "ready";
   selected.value = null;
@@ -402,13 +465,17 @@ function startGame() {
   syncHud();
   nextTick(() => {
     resizeCanvas();
-    for (const [index, kind] of ZD_UNIT_ORDER.entries()) {
-      const context = iconEls.value[index]?.getContext("2d");
-      if (context) drawZdUnitIcon(context, kind, 88);
-    }
+    drawIcons();
     syncHud();
     canvasEl.value?.focus({ preventScroll: true });
   });
+}
+
+function drawIcons() {
+  for (const [index, kind] of ZD_UNIT_ORDER.entries()) {
+    const context = iconEls.value[index]?.getContext("2d");
+    if (context) drawZdUnitIcon(context, kind, 88);
+  }
 }
 
 function beginDefense() {
@@ -455,7 +522,7 @@ function selectCard(value: Exclude<Selection, null>) {
   drawScene();
 }
 
-/** 点中一株药材：记下它，药材栏上方显示升级信息。 */
+/** 点中一株药材：记下它，在它旁边弹出小卡片。 */
 function focusUnit(lane: number, row: number) {
   const unit = zdUnitAt(game, lane, row);
   focusInfo.value = unit
@@ -464,12 +531,10 @@ function focusUnit(lane: number, row: number) {
       row,
       kind: unit.kind,
       grafts: unit.grafts.length,
-      // 泡腾片不能被杂交；八种都齐了也就没得杂交了。
-      canGraft: unit.kind !== "fizz" && unit.grafts.length < ZD_UNIT_ORDER.length - 1,
       name: zdUnitName(unit),
-      // 三种以上没有专门的品种名，把这一格里有哪几种列出来。
-      genes: unit.grafts.length > 1 ? zdUnitKinds(unit).map((kind) => ZD_UNITS[kind].name).join("＋") : null,
-      perk: zdUnitPerks(unit).join("；") || null,
+      // 杂交过的把这一格里有哪几种列出来。
+      genes: unit.grafts.length ? zdUnitKinds(unit).map((kind) => ZD_UNITS[kind].name).join("＋") : null,
+      perks: zdUnitPerks(unit),
       level: unit.level,
       next: zdNextUpgrade(unit),
     }
@@ -597,8 +662,36 @@ function handleVisibilityChange() {
   if (document.hidden && gamePhase.value === "playing") togglePause();
 }
 
+/**
+ * 盯着帧间隔：每 90 帧算一次平均。这台设备最顺的时候是多少记下来（省电模式、高刷屏各不相同），
+ * 之后连续两段都比它慢一半以上、并且每帧超过 24 毫秒，就把画布的清晰度降一档——
+ * 要画的像素少了，后期场面再大也能跟上。一局里只降不升，免得来回跳。
+ */
+function watchFrameRate(interval: number) {
+  // 切到后台再回来、弹出系统对话框这类停顿不算。
+  if (interval <= 0 || interval > 250) return;
+  paceFrames += 1;
+  paceTotal += interval;
+  if (paceFrames < 90) return;
+  const pace = paceTotal / paceFrames;
+  paceFrames = 0;
+  paceTotal = 0;
+  if (!bestPace || pace < bestPace) bestPace = pace;
+  slowWindows = pace > Math.max(24, bestPace * 1.5) ? slowWindows + 1 : 0;
+  if (slowWindows < 2 || qualityStep >= QUALITY_RATIOS.length - 1) return;
+  slowWindows = 0;
+  const before = canvasRatio();
+  qualityStep += 1;
+  if (canvasRatio() < before) resizeCanvas();
+}
+
+function canvasRatio() {
+  return Math.min(window.devicePixelRatio || 1, QUALITY_RATIOS[qualityStep]);
+}
+
 function gameLoop(now: number) {
   if (gamePhase.value !== "playing") return;
+  watchFrameRate(now - lastFrameAt);
   let remaining = Math.min((now - lastFrameAt) / 1000, 0.1);
   lastFrameAt = now;
   while (remaining > 0 && !game.over) {
@@ -607,10 +700,25 @@ function gameLoop(now: number) {
     remaining -= delta;
   }
   playEvents();
-  syncHud();
+  // 后期分数和药力每一帧都在变。界面上的数字一秒刷十次就够了，省下每帧更新页面的开销。
+  if (game.over || now - lastHudAt >= 100) {
+    lastHudAt = now;
+    syncHud();
+  }
   drawScene();
   if (game.over) finishGame();
   else animationFrame = requestAnimationFrame(gameLoop);
+}
+
+/**
+ * 对局里反复出现的音效：同一种两次之间至少隔 gap 毫秒。后期一秒有几十次开火、爆炸和光束，
+ * 每次都新建一个振荡器会拖慢页面，声音也糊成一片。
+ */
+function playRepeating(key: string, gap: number, frequency: number, duration: number, volume: number) {
+  const now = performance.now();
+  if (now - (repeatingToneAt[key] ?? -1e9) < gap) return;
+  repeatingToneAt[key] = now;
+  playTone(frequency, duration, volume);
 }
 
 function playEvents() {
@@ -620,21 +728,16 @@ function playEvents() {
       banner.value = { id: bannerSeq, text: event === "bigWave" ? "一大波僵尸来袭！" : `第 ${game.wave} 波`, big: event === "bigWave" };
       bannerUntil = game.time + (event === "bigWave" ? 2.6 : 1.6);
       playTone(event === "bigWave" ? 196 : 294, 0.22, 0.05);
-    } else if (event === "shoot") {
-      // 射手多了以后每帧都有开火声，限到每秒八次。
-      if (game.time - lastShotToneAt > 0.125) {
-        lastShotToneAt = game.time;
-        playTone(720, 0.03, 0.012);
-      }
-    } else if (event === "boom") playTone(110, 0.3, 0.07);
-    else if (event === "beam") playTone(250, 0.14, 0.035);
+    } else if (event === "shoot") playRepeating("shoot", 125, 720, 0.03, 0.012);
+    else if (event === "boom") playRepeating("boom", 160, 110, 0.3, 0.07);
+    else if (event === "beam") playRepeating("beam", 180, 250, 0.14, 0.035);
     else if (event === "place") playTone(520, 0.06, 0.035);
     else if (event === "upgrade" || event === "graft") {
       playTone(event === "graft" ? 587 : 660, 0.07, 0.035);
       window.setTimeout(() => playTone(event === "graft" ? 880 : 990, 0.1, 0.03), 80);
     }
     else if (event === "remove") playTone(330, 0.06, 0.03);
-    else if (event === "energy") playTone(988, 0.05, 0.015);
+    else if (event === "energy") playRepeating("energy", 220, 988, 0.05, 0.015);
   }
   game.events.length = 0;
 }
@@ -683,9 +786,10 @@ function resizeCanvas() {
   const canvas = canvasEl.value;
   const phone = phoneEl.value;
   if (!canvas || !phone || !phone.clientWidth || !phone.clientHeight) return;
-  const ratio = Math.min(window.devicePixelRatio || 1, 2);
+  const ratio = canvasRatio();
   const scale = phone.clientWidth / WORLD_WIDTH;
   worldHeight = phone.clientHeight / scale;
+  viewSize.value = { width: phone.clientWidth, height: phone.clientHeight };
   canvas.width = Math.round(phone.clientWidth * ratio);
   canvas.height = Math.round(phone.clientHeight * ratio);
   canvasContext = canvas.getContext("2d");
@@ -1021,62 +1125,126 @@ function writeStorage(key: string, value: string) {
   bottom: max(10px, var(--game-safe-bottom));
   left: 8px;
 }
-.zd-hint,
-.zd-upgrade {
+.zd-hint {
   display: flex;
-  min-height: 32px;
+  min-height: 26px;
   align-items: center;
   justify-content: center;
-  margin: 0 0 6px;
-}
-.zd-hint {
+  margin: 0 0 4px;
   color: var(--zd-muted);
   font-size: 11px;
   font-weight: 500;
   text-align: center;
 }
-.zd-upgrade {
-  justify-content: space-between;
-  gap: 10px;
-  padding: 0 4px 0 8px;
+.zd-hint.warn { color: #ffb4a6; }
+
+/* 点中药材时弹在它旁边的小卡片。 */
+.zd-pop {
+  position: absolute;
+  z-index: 3;
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px 12px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  border-radius: 14px;
+  background: rgba(17, 26, 30, .96);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .42);
+  color: var(--zd-text);
+  pointer-events: auto;
+  animation: zd-pop-in .14s ease-out both;
 }
-.zd-upgrade span { display: grid; min-width: 0; gap: 2px; line-height: 1.15; }
-.zd-upgrade b { color: var(--zd-text); font-size: 12px; font-weight: 700; }
-.zd-upgrade small { overflow: hidden; color: var(--zd-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
-.zd-upgrade small.zd-perk { color: var(--zd-gold); }
-.zd-upgrade b i { color: var(--zd-muted); font-size: 10px; font-style: normal; font-weight: 500; }
-.zd-upgrade button {
+@keyframes zd-pop-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+.zd-pop-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.zd-pop-head b { min-width: 0; overflow: hidden; font-size: 14px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.zd-pop-head em {
   flex: 0 0 auto;
-  min-height: 30px;
-  padding: 0 14px;
-  border: 0;
+  padding: 2px 8px;
   border-radius: 999px;
-  background: var(--zd-gold);
+  background: linear-gradient(180deg, #ffe08e, #f2b93c);
+  color: #3a2a05;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1.3;
+}
+.zd-pop p { margin: 0; }
+.zd-pop-genes { color: var(--zd-muted); font-size: 10px; line-height: 1.4; }
+.zd-pop-perks { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; }
+.zd-pop-perks li { position: relative; padding-left: 11px; color: var(--zd-gold); font-size: 11px; line-height: 1.4; }
+.zd-pop-perks li::before {
+  position: absolute;
+  top: .5em;
+  left: 1px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  content: "";
+}
+.zd-pop-perks li.more { color: var(--zd-muted); }
+.zd-pop-next { color: var(--zd-muted); font-size: 11px; line-height: 1.45; }
+.zd-pop button {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 2px;
+  border: 0;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffe08e, #f2b93c);
+  box-shadow: 0 2px 0 #b07c14;
   color: #3a2a05;
   font: inherit;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 800;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-.zd-upgrade button.short { background: rgba(255, 255, 255, .16); color: #ff9a8a; }
-.zd-hint.warn { color: #ffb4a6; }
+.zd-pop button span { font-size: 12px; font-weight: 700; opacity: .82; }
+.zd-pop button:active { box-shadow: none; transform: translateY(2px); }
+.zd-pop button.short { background: rgba(255, 255, 255, .14); box-shadow: none; color: #ff9a8a; }
+.zd-pop-tail {
+  position: absolute;
+  bottom: -6px;
+  width: 11px;
+  height: 11px;
+  margin-left: -5.5px;
+  border-right: 1px solid rgba(255, 255, 255, .18);
+  border-bottom: 1px solid rgba(255, 255, 255, .18);
+  background: rgb(17, 26, 30);
+  transform: rotate(45deg);
+}
+.zd-pop.below .zd-pop-tail { top: -6px; bottom: auto; transform: rotate(225deg); }
 
 .zd-bar {
   display: flex;
   align-items: stretch;
-  gap: 5px;
+  gap: 6px;
   padding: 6px;
   border-radius: 18px;
 }
 .zd-energy {
   display: grid;
-  width: 50px;
+  width: 52px;
   flex: 0 0 auto;
   place-content: center;
   justify-items: center;
-  gap: 3px;
+  gap: 4px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, .26);
   line-height: 1;
+}
+/* 药力：一颗发亮的药丸。 */
+.zd-energy i {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 30%, #fffbd6, #ffd166 46%, #e8962a 100%);
+  box-shadow: 0 0 10px rgba(255, 209, 102, .55), inset 0 -2px 3px rgba(150, 80, 10, .35);
 }
 .zd-energy small { color: var(--zd-muted); font-size: 10px; font-weight: 600; }
 .zd-energy b { color: var(--zd-gold); font-size: 17px; font-weight: 800; letter-spacing: -.02em; }
@@ -1090,49 +1258,75 @@ function writeStorage(key: string, value: string) {
   gap: 5px;
 }
 
+/* 药材卡：上面是图，下面一条写着价钱。 */
 .zd-card {
   position: relative;
   display: grid;
   min-width: 0;
   justify-items: center;
-  gap: 2px;
-  padding: 4px 2px 5px;
+  padding: 3px 0 0;
   overflow: hidden;
-  border: 1px solid transparent;
+  border: 1.5px solid rgba(255, 255, 255, .2);
   border-radius: 12px;
-  background: rgba(255, 255, 255, .09);
+  background: radial-gradient(circle at 50% 34%, #6f9a84, #33503f 78%);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, .36);
   color: var(--zd-text);
   font: inherit;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
-  transition: transform .12s ease, background-color .12s ease;
+  transition: transform .12s ease, border-color .12s ease;
 }
-.zd-card canvas { width: 34px; height: 34px; }
-.zd-card span { color: var(--zd-gold); font-size: 11px; font-weight: 700; line-height: 1; }
+.zd-card canvas { width: 38px; height: 38px; filter: drop-shadow(0 2px 1.5px rgba(0, 0, 0, .35)); }
+.zd-card span {
+  display: block;
+  width: 100%;
+  margin-top: 2px;
+  padding: 3px 0 4px;
+  background: rgba(10, 16, 18, .62);
+  color: var(--zd-gold);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  text-align: center;
+}
 .zd-card em {
   position: absolute;
-  top: 3px;
+  top: 2px;
   left: 5px;
-  color: rgba(244, 247, 242, .4);
+  color: rgba(244, 247, 242, .55);
   font-size: 9px;
   font-style: normal;
   font-weight: 600;
 }
 .zd-card.short span { color: #ff9a8a; }
-.zd-card.short canvas { opacity: .4; }
-.zd-card.selected { border-color: var(--zd-gold); background: rgba(255, 209, 102, .2); transform: translateY(-3px); }
+.zd-card.short canvas { opacity: .45; filter: grayscale(.7); }
+.zd-card.selected {
+  border-color: var(--zd-gold);
+  box-shadow: 0 0 0 1.5px var(--zd-gold), 0 6px 12px rgba(0, 0, 0, .4);
+  transform: translateY(-4px);
+}
 .zd-card-mask {
   position: absolute;
   right: 0;
   bottom: 0;
   left: 0;
   height: 0;
-  background: rgba(8, 12, 14, .6);
+  background: rgba(8, 12, 14, .66);
   pointer-events: none;
 }
-.zd-shovel { grid-column: span 2; align-content: center; }
-.zd-shovel b { font-size: 16px; font-weight: 800; line-height: 1.2; }
-.zd-shovel span { color: var(--zd-muted); font-size: 10px; font-weight: 500; }
+.zd-shovel {
+  grid-column: span 2;
+  grid-auto-flow: column;
+  align-content: center;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0;
+  background: linear-gradient(180deg, #56606a, #333b44);
+}
+.zd-shovel svg { width: 24px; height: 24px; color: #e6ebef; }
+.zd-shovel span { width: auto; margin: 0; padding: 0; background: none; color: var(--zd-text); font-size: 12px; font-weight: 700; }
+.zd-shovel.selected { background: linear-gradient(180deg, #b0503f, #7c3023); }
 
 /* 暂停和结算 */
 .zd-shell .modal-shade { background: rgba(8, 14, 14, .56); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
@@ -1179,7 +1373,8 @@ function writeStorage(key: string, value: string) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .zd-banner { animation: none; }
+  .zd-banner,
+  .zd-pop { animation: none; }
   .zd-card { transition: none; }
 }
 </style>

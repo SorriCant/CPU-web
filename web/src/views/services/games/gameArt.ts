@@ -35,25 +35,10 @@ export function groundShadow(context: Context, x: number, y: number, rx: number,
   context.restore();
 }
 
-/** 上亮下暗的体积感填充。 */
-export function volume(context: Context, x: number, y: number, radius: number, base: string, light = 0.32, dark = 0.2) {
-  const fill = context.createRadialGradient(x - radius * 0.35, y - radius * 0.42, radius * 0.08, x, y, radius * 1.08);
-  fill.addColorStop(0, lighten(base, light));
-  fill.addColorStop(0.55, base);
-  fill.addColorStop(1, darken(base, dark));
-  return fill;
-}
-
 export function vertical(context: Context, top: number, bottom: number, from: string, to: string) {
   const fill = context.createLinearGradient(0, top, 0, bottom);
   fill.addColorStop(0, from);
   fill.addColorStop(1, to);
-  return fill;
-}
-
-export function horizontal(context: Context, left: number, right: number, stops: Array<[number, string]>) {
-  const fill = context.createLinearGradient(left, 0, right, 0);
-  for (const [offset, color] of stops) fill.addColorStop(offset, color);
   return fill;
 }
 
@@ -82,11 +67,4 @@ export function roundedPath(context: Context, x: number, y: number, width: numbe
   context.arcTo(x, y + height, x, y, r);
   context.arcTo(x, y, x + width, y, r);
   context.closePath();
-}
-
-/** 高光：一小片半透明的白。 */
-export function gloss(context: Context, x: number, y: number, rx: number, ry: number, rotation = -0.6, alpha = 0.5) {
-  ellipsePath(context, x, y, rx, ry, rotation);
-  context.fillStyle = `rgba(255, 255, 255, ${alpha})`;
-  context.fill();
 }
