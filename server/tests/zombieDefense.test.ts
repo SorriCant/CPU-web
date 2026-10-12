@@ -16,18 +16,24 @@ import {
   createZdState,
   zdCooldownRatio,
   zdMaxScoreThroughWave,
+  zdNextUpgrade,
   zdPlace,
   zdPlaceBlocker,
   zdRemove,
   zdStep,
   zdUnitAt,
+  zdUnitStats,
+  zdUpgrade,
+  zdUpgradeBlocker,
   zdWaveBudget,
   zdWaveHpScale,
   zdWaveStartSeconds,
   zdZombiePoints,
+  ZD_MAX_LEVEL,
   ZD_RULES,
   ZD_UNIT_ORDER,
   ZD_UNITS,
+  ZD_UPGRADES,
   ZD_ZOMBIES,
   type ZdState,
   type ZdZombieKind,
@@ -170,6 +176,96 @@ test("泡腾片炸开周围一圈，够不着的僵尸不受影响", () => {
   assert.equal(state.score, zdZombiePoints("walker") + zdZombiePoints("runner"));
 });
 
+test("点已种下的药材可以升级，最高三级，泡腾片不能升", () => {
+  const state = arena();
+  assert.equal(zdUpgradeBlocker(state, 0, 0), "这一格没有药材");
+  zdPlace(state, "capsule", 0, 6);
+  const unit = zdUnitAt(state, 0, 6)!;
+  assert.equal(unit.level, 1);
+  assert.deepEqual(zdNextUpgrade(unit), ZD_UPGRADES.capsule[0]);
+  state.energy = ZD_UPGRADES.capsule[0].cost - 1;
+  assert.equal(zdUpgradeBlocker(state, 0, 6), "药力不够");
+  assert.equal(zdUpgrade(state, 0, 6), false);
+  state.energy = 1000;
+  assert.equal(zdUpgrade(state, 0, 6), true);
+  assert.equal(unit.level, 2);
+  assert.equal(state.energy, 1000 - ZD_UPGRADES.capsule[0].cost);
+  assert.equal(unit.maxHp, zdUnitStats("capsule", 2).hp);
+  // 升级不占种植冷却，可以连着升。
+  assert.equal(zdUpgrade(state, 0, 6), true);
+  assert.equal(unit.level, ZD_MAX_LEVEL);
+  assert.equal(zdNextUpgrade(unit), null);
+  assert.equal(zdUpgradeBlocker(state, 0, 6), "已经满级");
+  assert.ok(state.events.includes("upgrade"));
+
+  state.cooldowns.fizz = 0;
+  zdPlace(state, "fizz", 1, 6);
+  assert.equal(zdUpgradeBlocker(state, 1, 6), "泡腾片不能升级");
+  for (const kind of ZD_UNIT_ORDER) {
+    assert.equal(ZD_UPGRADES[kind].length, kind === "fizz" ? 0 : ZD_MAX_LEVEL - 1, kind);
+    for (const upgrade of ZD_UPGRADES[kind]) assert.ok(upgrade.cost > 0 && upgrade.summary.length > 0, kind);
+  }
+});
+
+test("升级后的胶囊射手连发，击退同一只僵尸明显更快", () => {
+  const killTime = (level: number) => {
+    const state = arena();
+    zdPlace(state, "capsule", 0, 6);
+    for (let index = 1; index < level; index += 1) zdUpgrade(state, 0, 6);
+    addZombie(state, "walker", 0, 0);
+    const start = state.time;
+    while (state.zombies.length && !state.over) zdStep(state, STEP);
+    assert.equal(state.over, false);
+    return state.time - start;
+  };
+  const [one, two, three] = [1, 2, 3].map(killTime);
+  assert.ok(two < one * 0.6, `${two} < ${one}`);
+  assert.ok(three < one * 0.4, `${three} < ${one}`);
+  assert.deepEqual([1, 2, 3].map((level) => zdUnitStats("capsule", level).shots), [1, 2, 3]);
+});
+
+test("研钵升级增产，药柜升级加厚、修好，三级会扎伤啃它的僵尸", () => {
+  const farm = arena();
+  zdPlace(farm, "mortar", 0, 6);
+  zdUpgrade(farm, 0, 6);
+  zdUpgrade(farm, 0, 6);
+  const before = farm.energy;
+  advance(farm, ZD_UNITS.mortar.interval * 0.6);
+  assert.equal(farm.energy - before, zdUnitStats("mortar", 3).energy);
+  assert.ok(zdUnitStats("mortar", 3).energy > zdUnitStats("mortar", 2).energy && zdUnitStats("mortar", 2).energy > ZD_RULES.passiveEnergy);
+
+  const wall = arena();
+  zdPlace(wall, "cabinet", 0, 3);
+  const zombie = addZombie(wall, "giant", 0, 2.6);
+  advance(wall, 3);
+  const cabinet = zdUnitAt(wall, 0, 3)!;
+  assert.ok(cabinet.hp < cabinet.maxHp);
+  const untouched = zombie.hp;
+  assert.equal(untouched, zombie.maxHp);
+  zdUpgrade(wall, 0, 3);
+  assert.equal(cabinet.hp, zdUnitStats("cabinet", 2).hp);
+  zdUpgrade(wall, 0, 3);
+  assert.equal(cabinet.maxHp, zdUnitStats("cabinet", 3).hp);
+  advance(wall, 2);
+  assert.ok(zombie.hp < untouched, "三级药柜反伤");
+});
+
+test("三级薄荷射手命中时波及旁边的僵尸", () => {
+  const state = arena();
+  zdPlace(state, "mint", 2, 6);
+  zdUpgrade(state, 2, 6);
+  zdUpgrade(state, 2, 6);
+  const target = addZombie(state, "beaker", 2, 3);
+  const neighbour = addZombie(state, "beaker", 3, 3.2);
+  const far = addZombie(state, "beaker", 4, 3);
+  for (const zombie of state.zombies) zombie.slow = 0;
+  advance(state, 2.5);
+  assert.ok(target.hp < target.maxHp && target.slow > 0);
+  assert.ok(neighbour.hp < neighbour.maxHp && neighbour.slow > 0);
+  assert.equal(far.hp, far.maxHp);
+  assert.equal(far.slow, 0);
+});
+
 test("只要一只僵尸走出药圃，对局立即结束，之后不再推进", () => {
   const state = arena();
   addZombie(state, "walker", 3, ZD_RULES.rows - 0.05);
@@ -211,6 +307,8 @@ test("每波的僵尸不超过预算，血量逐波上涨，每五波来一大�
   }
   assert.ok(zdWaveBudget(5) > zdWaveBudget(6));
   assert.equal(zdWaveHpScale(1), 1);
+  // 后期血量按比例连涨，涨幅比前期大得多。
+  assert.ok(zdWaveHpScale(20) / zdWaveHpScale(19) > zdWaveHpScale(8) / zdWaveHpScale(7) + 0.05);
 
   const state = createZdState(5);
   const seen = new Map<number, number>();
@@ -232,7 +330,7 @@ test("每波的僵尸不超过预算，血量逐波上涨，每五波来一大�
   }
 });
 
-test("什么都不种撑不过一分钟，摆满射手且药力无限也终究守不住", () => {
+test("什么都不种撑不过一分钟，摆满射手且药力无限、全部升满也终究守不住", () => {
   const idle = createZdState(11);
   advance(idle, 120);
   assert.equal(idle.over, true);
@@ -251,6 +349,23 @@ test("什么都不种撑不过一分钟，摆满射手且药力无限也终究�
   }
   assert.equal(full.over, true);
   assert.ok(full.wave >= 15 && full.wave <= 32, String(full.wave));
+
+  // 同样的作弊条件再把每一株都升满：撑得更久，但仍然会输。
+  const maxed = createZdState(11);
+  while (!maxed.over && maxed.time < 30 * 60) {
+    maxed.energy = 999999;
+    for (const kind of ZD_UNIT_ORDER) maxed.cooldowns[kind] = 0;
+    for (let lane = 0; lane < ZD_RULES.lanes; lane += 1) {
+      for (let row = 0; row < ZD_RULES.rows; row += 1) {
+        zdPlace(maxed, row === 0 ? "cabinet" : row === 3 ? "mint" : "capsule", lane, row);
+        while (zdUpgrade(maxed, lane, row));
+      }
+    }
+    zdStep(maxed, STEP);
+    maxed.events.length = 0;
+  }
+  assert.equal(maxed.over, true);
+  assert.ok(maxed.wave > full.wave && maxed.wave <= 60, String(maxed.wave));
 });
 
 test("服务端的波次时间表和分数上限与页面引擎一致", () => {

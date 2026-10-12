@@ -59,7 +59,20 @@
         <div v-if="banner" :key="banner.id" class="zd-banner" :class="{ big: banner.big }" role="status">{{ banner.text }}</div>
 
         <div class="zd-dock">
-          <p class="zd-hint" :class="{ warn: Boolean(tip) }">{{ tip || selectionHint }}</p>
+          <div v-if="focusInfo && !tip" class="zd-upgrade">
+            <span>
+              <b>{{ focusInfo.name }} · {{ focusInfo.level }} 级</b>
+              <small>{{ focusInfo.next ? `升级后：${focusInfo.next.summary}` : focusInfo.kind === "fizz" ? "一次性的，不能升级" : "已经满级" }}</small>
+            </span>
+            <button
+              v-if="focusInfo.next"
+              data-cpu-button="surface"
+              type="button"
+              :class="{ short: energy < focusInfo.next.cost }"
+              @click.stop="upgradeFocused"
+            >升级 {{ focusInfo.next.cost }}</button>
+          </div>
+          <p v-else class="zd-hint" :class="{ warn: Boolean(tip) }">{{ tip || selectionHint }}</p>
           <div class="zd-bar">
             <div class="zd-energy" :aria-label="`药力 ${energy}`">
               <small>药力</small>
@@ -196,8 +209,12 @@
             <b v-else class="cloud-online">已连接</b>
           </div>
           <p>玩法：僵尸从上方沿五路药圃往下走，只要有一只走出药圃，这一局就结束。先选下方的药材，再点药圃里的空格种下；种植要花药力，药力会慢慢自己涨，研钵能磨出更多。僵尸一波比一波多、一波比一波硬，每五波来一大波。</p>
-          <p v-for="kind in ZD_UNIT_ORDER" :key="kind" class="zd-guide"><b>{{ ZD_UNITS[kind].name }}</b>{{ ZD_UNITS[kind].cost }} 药力 · {{ ZD_UNITS[kind].summary }}</p>
-          <p>操作：点击 / 触摸选药材和格子，数字键 1 到 5 选药材，6 选铲子，P 暂停，Esc 返回主页。</p>
+          <p v-for="kind in ZD_UNIT_ORDER" :key="kind" class="zd-guide">
+            <b>{{ ZD_UNITS[kind].name }}</b>{{ ZD_UNITS[kind].cost }} 药力 · {{ ZD_UNITS[kind].summary }}
+            <small v-for="(upgrade, index) in ZD_UPGRADES[kind]" :key="index">{{ index + 2 }} 级（{{ upgrade.cost }} 药力）：{{ upgrade.summary }}</small>
+          </p>
+          <p>升级：不选药材时，直接点已经种下的药材，再点“升级”（或再点它一次）。最高 3 级，升级不用等冷却。</p>
+          <p>操作：点击 / 触摸选药材和格子，数字键 1 到 5 选药材，6 选铲子，U 升级点中的药材，P 暂停，Esc 返回主页。</p>
         </div>
       </section>
     </section>
@@ -221,13 +238,18 @@ import {
   createZdState,
   zdCommanderRank,
   zdCooldownRatio,
+  zdNextUpgrade,
   zdPlace,
   zdPlaceBlocker,
   zdRemove,
   zdStep,
   zdUnitAt,
+  zdUpgrade,
+  zdUpgradeBlocker,
   ZD_UNIT_ORDER,
   ZD_UNITS,
+  ZD_UPGRADES,
+  type ZdUpgrade,
   type ZdState,
   type ZdUnitKind,
 } from "./zombieDefenseEngine";
@@ -237,6 +259,7 @@ type Screen = "menu" | "game" | "ranking" | "achievements" | "history" | "settin
 type GamePhase = "ready" | "playing" | "paused" | "over";
 type Selection = ZdUnitKind | "shovel" | null;
 type HistoryItem = { score: number; waves: number; playedAt: string };
+type FocusInfo = { lane: number; row: number; kind: ZdUnitKind; name: string; level: number; next: ZdUpgrade | null };
 
 const router = useRouter();
 const auth = useAuthStore();
@@ -253,6 +276,7 @@ const kills = ref(0);
 const energy = ref(0);
 const selected = ref<Selection>(null);
 const tip = ref("");
+const focusInfo = ref<FocusInfo | null>(null);
 const banner = ref<{ id: number; text: string; big: boolean } | null>(null);
 const bestScore = ref(0);
 const history = ref<HistoryItem[]>([]);
@@ -293,7 +317,7 @@ const commanderRank = computed(() => zdCommanderRank(score.value));
 const resultTitle = computed(() => wave.value >= 9 ? "铜墙铁壁" : wave.value >= 5 ? "渐入佳境" : "防线失守");
 const selectionHint = computed(() => {
   if (selected.value === "shovel") return "点一株药材把它移除";
-  if (!selected.value) return "选一种药材，再点药圃里的空格";
+  if (!selected.value) return "选药材种到空格里；点已种下的药材可以升级";
   const unit = ZD_UNITS[selected.value];
   return `${unit.name} · ${unit.summary}`;
 });
@@ -353,6 +377,7 @@ function startGame() {
   gamePhase.value = "ready";
   selected.value = null;
   tip.value = "";
+  focusInfo.value = null;
   banner.value = null;
   isNewRecord.value = false;
   newlyUnlocked.value = [];
@@ -410,6 +435,26 @@ function selectCard(value: Exclude<Selection, null>) {
   if (gamePhase.value !== "playing") return;
   selected.value = selected.value === value ? null : value;
   tip.value = "";
+  focusInfo.value = null;
+  drawScene();
+}
+
+/** 点中一株药材：记下它，药材栏上方显示升级信息。 */
+function focusUnit(lane: number, row: number) {
+  const unit = zdUnitAt(game, lane, row);
+  focusInfo.value = unit
+    ? { lane, row, kind: unit.kind, name: ZD_UNITS[unit.kind].name, level: unit.level, next: zdNextUpgrade(unit) }
+    : null;
+}
+
+function upgradeFocused() {
+  const focus = focusInfo.value;
+  if (!focus || gamePhase.value !== "playing") return;
+  const blocker = zdUpgradeBlocker(game, focus.lane, focus.row);
+  if (blocker) showTip(blocker);
+  else zdUpgrade(game, focus.lane, focus.row);
+  playEvents();
+  syncHud();
   drawScene();
 }
 
@@ -442,8 +487,16 @@ function handleCanvasPointer(event: PointerEvent) {
     const blocker = zdPlaceBlocker(game, selected.value, cell.lane, cell.row);
     if (blocker) showTip(blocker);
     else if (zdPlace(game, selected.value, cell.lane, cell.row)) selected.value = null;
+  } else if (!zdUnitAt(game, cell.lane, cell.row)) {
+    focusInfo.value = null;
+    showTip("先在下方选一种药材");
+  } else if (focusInfo.value?.lane === cell.lane && focusInfo.value.row === cell.row && focusInfo.value.next) {
+    // 再点一次已经点中的药材，直接升级。
+    upgradeFocused();
+    return;
   } else {
-    showTip(zdUnitAt(game, cell.lane, cell.row) ? "要移除先选铲子" : "先在下方选一种药材");
+    tip.value = "";
+    focusUnit(cell.lane, cell.row);
   }
   playEvents();
   syncHud();
@@ -469,6 +522,9 @@ function handleKeydown(event: KeyboardEvent) {
   if (digit && screen.value === "game") {
     event.preventDefault();
     selectCard(digit === "6" ? "shovel" : ZD_UNIT_ORDER[Number(digit) - 1]);
+  } else if (event.code === "KeyU" && screen.value === "game" && focusInfo.value) {
+    event.preventDefault();
+    upgradeFocused();
   } else if (event.code === "KeyP" && screen.value === "game" && (gamePhase.value === "playing" || gamePhase.value === "paused")) {
     event.preventDefault();
     togglePause();
@@ -513,6 +569,10 @@ function playEvents() {
       }
     } else if (event === "boom") playTone(110, 0.3, 0.07);
     else if (event === "place") playTone(520, 0.06, 0.035);
+    else if (event === "upgrade") {
+      playTone(660, 0.07, 0.035);
+      window.setTimeout(() => playTone(990, 0.1, 0.03), 80);
+    }
     else if (event === "remove") playTone(330, 0.06, 0.03);
     else if (event === "energy") playTone(988, 0.05, 0.015);
   }
@@ -525,6 +585,12 @@ function syncHud() {
   kills.value = game.kills;
   energy.value = game.energy;
   if (banner.value && game.time >= bannerUntil) banner.value = null;
+  // 点中的药材可能被啃掉、被铲掉或刚升了级。
+  const focus = focusInfo.value;
+  if (focus) {
+    const unit = zdUnitAt(game, focus.lane, focus.row);
+    if (!unit || unit.kind !== focus.kind || unit.level !== focus.level) focusUnit(focus.lane, focus.row);
+  }
   for (const [index, kind] of ZD_UNIT_ORDER.entries()) {
     const mask = maskEls.value[index];
     if (mask) mask.style.height = `${zdCooldownRatio(game, kind) * 100}%`;
@@ -535,6 +601,7 @@ function finishGame() {
   if (gamePhase.value !== "playing") return;
   gamePhase.value = "over";
   selected.value = null;
+  focusInfo.value = null;
   isNewRecord.value = score.value > bestScore.value;
   if (isNewRecord.value) {
     bestScore.value = score.value;
@@ -566,7 +633,7 @@ function resizeCanvas() {
 
 function drawScene() {
   if (!canvasContext) return;
-  drawZdScene(canvasContext, { width: WORLD_WIDTH, height: worldHeight, game, selected: selected.value });
+  drawZdScene(canvasContext, { width: WORLD_WIDTH, height: worldHeight, game, selected: selected.value, focus: focusInfo.value });
 }
 
 function drawMenuArt() {
@@ -799,6 +866,7 @@ function writeStorage(key: string, value: string) {
 .zd-shell .flight-settings-panel > p { color: #4c5a45; text-align: left; }
 .zd-shell .flight-settings-panel > .zd-guide { margin-top: -6px; }
 .zd-guide b { margin-right: 8px; color: #2f6b3a; }
+.zd-guide small { display: block; margin-top: 2px; color: #7b8676; font-size: 9px; }
 
 /* 对局画面：深色半透明的浮层，不用粗边框和硬阴影。 */
 .zd-shell .game-phone { background: #1c3a31; }
@@ -891,13 +959,43 @@ function writeStorage(key: string, value: string) {
   bottom: max(10px, env(safe-area-inset-bottom));
   left: 8px;
 }
-.zd-hint {
+.zd-hint,
+.zd-upgrade {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
   margin: 0 0 6px;
+}
+.zd-hint {
   color: var(--zd-muted);
   font-size: 11px;
   font-weight: 500;
   text-align: center;
 }
+.zd-upgrade {
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 4px 0 8px;
+}
+.zd-upgrade span { display: grid; min-width: 0; gap: 2px; line-height: 1.15; }
+.zd-upgrade b { color: var(--zd-text); font-size: 12px; font-weight: 700; }
+.zd-upgrade small { overflow: hidden; color: var(--zd-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.zd-upgrade button {
+  flex: 0 0 auto;
+  min-height: 30px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--zd-gold);
+  color: #3a2a05;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.zd-upgrade button.short { background: rgba(255, 255, 255, .16); color: #ff9a8a; }
 .zd-hint.warn { color: #ffb4a6; }
 
 .zd-bar {

@@ -38,10 +38,12 @@ export interface ZdSceneState {
   game: ZdState;
   /** 当前选中的药材或铲子，用来提示哪些格子可以操作。 */
   selected: ZdUnitKind | "shovel" | null;
+  /** 点中准备升级的那一格。 */
+  focus?: { lane: number; row: number } | null;
 }
 
 const TOP_RESERVE = 100;
-const BOTTOM_RESERVE = 162;
+const BOTTOM_RESERVE = 172;
 const CREAM = "#fff3df";
 const RED = "#ef5a44";
 const MINT = "#63d9bb";
@@ -149,6 +151,16 @@ function drawSelection(context: Context, scene: ZdSceneState, layout: ZdLayout) 
   }
 }
 
+function drawFocus(context: Context, scene: ZdSceneState, layout: ZdLayout) {
+  if (!scene.focus) return;
+  roundedPath(context, layout.left + scene.focus.lane * layout.cellWidth + 3, layout.top + scene.focus.row * layout.cellHeight + 3, layout.cellWidth - 6, layout.cellHeight - 6, 12);
+  context.fillStyle = "rgba(255, 209, 102, .14)";
+  context.fill();
+  context.lineWidth = 2;
+  context.strokeStyle = GOLD;
+  context.stroke();
+}
+
 function face(context: Context, x: number, y: number, size: number) {
   for (const side of [-1, 1]) {
     ellipsePath(context, x + side * size * 0.1, y, size * 0.034, size * 0.048);
@@ -178,16 +190,21 @@ function leaves(context: Context, size: number, color: string) {
   }
 }
 
-function drawCapsuleShooter(context: Context, size: number, pulse: number) {
+function drawCapsuleShooter(context: Context, size: number, pulse: number, level: number) {
   const firing = pulse > 0;
   leaves(context, size, "#5fbf78");
   context.translate(0, firing ? size * 0.04 : 0);
-  // 炮口
-  roundedPath(context, -size * 0.11, -size * 0.44, size * 0.22, size * 0.16, size * 0.05);
-  paint(context, horizontal(context, -size * 0.11, size * 0.11, [[0, lighten(RED, 0.1)], [1, darken(RED, 0.3)]]), darken(RED, 0.45), 1.2);
-  ellipsePath(context, 0, -size * 0.44, size * 0.075, size * 0.028);
-  context.fillStyle = darken(RED, 0.6);
-  context.fill();
+  // 炮口：几级就有几个
+  const muzzles = level >= 3 ? [-0.14, 0, 0.14] : level === 2 ? [-0.09, 0.09] : [0];
+  const width = level >= 3 ? 0.13 : level === 2 ? 0.16 : 0.22;
+  for (const offset of muzzles) {
+    const lift = offset === 0 && level >= 3 ? 0.04 : 0;
+    roundedPath(context, size * (offset - width / 2), -size * (0.44 + lift), size * width, size * 0.16, size * 0.045);
+    paint(context, horizontal(context, size * (offset - width / 2), size * (offset + width / 2), [[0, lighten(RED, 0.1)], [1, darken(RED, 0.3)]]), darken(RED, 0.45), 1.2);
+    ellipsePath(context, size * offset, -size * (0.44 + lift), size * width * 0.34, size * 0.024);
+    context.fillStyle = level >= 2 ? GOLD : darken(RED, 0.6);
+    context.fill();
+  }
   // 胶囊身体：上半红、下半米白
   roundedPath(context, -size * 0.23, -size * 0.32, size * 0.46, size * 0.66, size * 0.23);
   paint(context, horizontal(context, -size * 0.23, size * 0.23, [[0, "#fffaf0"], [1, "#ecd9b8"]]), null);
@@ -213,9 +230,25 @@ function drawCapsuleShooter(context: Context, size: number, pulse: number) {
   }
 }
 
-function drawMintShooter(context: Context, size: number, pulse: number) {
+function drawMintShooter(context: Context, size: number, pulse: number, level: number) {
   const firing = pulse > 0;
+  if (level >= 3) {
+    // 三级：带一圈寒气
+    ellipsePath(context, 0, -size * 0.02, size * 0.4, size * 0.46);
+    context.fillStyle = "rgba(170, 235, 255, .2)";
+    context.fill();
+  }
   leaves(context, size, "#3fae8f");
+  if (level >= 2) {
+    for (const side of [-1, 1]) {
+      context.save();
+      context.translate(side * size * 0.26, size * 0.08);
+      context.rotate(side * 0.5);
+      ellipsePath(context, 0, 0, size * 0.055, size * 0.14);
+      paint(context, lighten(MINT, 0.2), darken(MINT, 0.45), 1.2);
+      context.restore();
+    }
+  }
   context.translate(0, firing ? size * 0.04 : 0);
   // 花苞：尖头朝上
   context.beginPath();
@@ -239,7 +272,7 @@ function drawMintShooter(context: Context, size: number, pulse: number) {
   }
 }
 
-function drawMortar(context: Context, size: number, pulse: number, time: number) {
+function drawMortar(context: Context, size: number, pulse: number, time: number, level: number) {
   const working = pulse > 0;
   // 杵
   context.save();
@@ -260,6 +293,14 @@ function drawMortar(context: Context, size: number, pulse: number, time: number)
   ellipsePath(context, 0, -size * 0.03, size * 0.29, size * 0.07);
   context.fillStyle = working ? GOLD : "#7fc37c";
   context.fill();
+  // 升级后钵身多一道、两道金箍
+  for (let band = 0; band < level - 1; band += 1) {
+    context.beginPath();
+    context.ellipse(0, size * (0.06 + band * 0.09), size * (0.33 - band * 0.05), size * 0.09, 0, 0.12 * Math.PI, 0.88 * Math.PI);
+    context.lineWidth = size * 0.035;
+    context.strokeStyle = GOLD;
+    context.stroke();
+  }
   if (working) {
     for (const [x, y] of [[-0.2, -0.3], [0.24, -0.26], [0, -0.42]]) {
       ellipsePath(context, x * size, y * size - (0.5 - pulse) * size * 0.2, size * 0.03, size * 0.03);
@@ -269,7 +310,19 @@ function drawMortar(context: Context, size: number, pulse: number, time: number)
   }
 }
 
-function drawCabinet(context: Context, size: number, ratio: number) {
+function drawCabinet(context: Context, size: number, ratio: number, level: number) {
+  if (level >= 3) {
+    // 三级：柜顶一排尖刺
+    for (let spike = 0; spike < 5; spike += 1) {
+      const x = -size * 0.3 + spike * size * 0.15;
+      context.beginPath();
+      context.moveTo(x - size * 0.05, -size * 0.38);
+      context.lineTo(x, -size * 0.52);
+      context.lineTo(x + size * 0.05, -size * 0.38);
+      context.closePath();
+      paint(context, "#dfe6ee", "#7d8794", 1.1);
+    }
+  }
   roundedPath(context, -size * 0.36, -size * 0.36, size * 0.72, size * 0.74, size * 0.07);
   paint(context, horizontal(context, -size * 0.36, size * 0.36, [[0, lighten(WOOD, 0.12)], [1, darken(WOOD, 0.24)]]), darken(WOOD, 0.5), 1.5);
   roundedPath(context, -size * 0.39, -size * 0.4, size * 0.78, size * 0.1, size * 0.04);
@@ -282,6 +335,13 @@ function drawCabinet(context: Context, size: number, ratio: number) {
       paint(context, vertical(context, y, y + size * 0.17, lighten(WOOD, 0.36), lighten(WOOD, 0.14)), darken(WOOD, 0.35), 1);
       ellipsePath(context, x + size * 0.145, y + size * 0.09, size * 0.028, size * 0.028);
       paint(context, GOLD, darken(GOLD, 0.4), 1);
+    }
+  }
+  if (level >= 2) {
+    // 二级起四角包铁
+    for (const [sx, sy] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+      roundedPath(context, sx * size * 0.36 - (sx > 0 ? size * 0.12 : 0), sy * size * 0.37 - (sy > 0 ? size * 0.1 : -size * 0.01), size * 0.12, size * 0.1, size * 0.02);
+      paint(context, "#c9d1db", "#6f7986", 1);
     }
   }
   if (ratio < 0.66) {
@@ -320,14 +380,14 @@ function drawFizz(context: Context, size: number, timer: number, time: number) {
   }
 }
 
-function drawUnitShape(context: Context, kind: ZdUnitKind, size: number, unit: Pick<ZdUnit, "pulse" | "timer" | "hp" | "maxHp">, time: number) {
+function drawUnitShape(context: Context, kind: ZdUnitKind, size: number, unit: Pick<ZdUnit, "pulse" | "timer" | "hp" | "maxHp" | "level">, time: number) {
   context.lineJoin = "round";
   context.lineCap = "round";
-  if (kind === "mortar") drawMortar(context, size, unit.pulse, time);
-  else if (kind === "cabinet") drawCabinet(context, size, unit.hp / unit.maxHp);
+  if (kind === "mortar") drawMortar(context, size, unit.pulse, time, unit.level);
+  else if (kind === "cabinet") drawCabinet(context, size, unit.hp / unit.maxHp, unit.level);
   else if (kind === "fizz") drawFizz(context, size, unit.timer, time);
-  else if (kind === "mint") drawMintShooter(context, size, unit.pulse);
-  else drawCapsuleShooter(context, size, unit.pulse);
+  else if (kind === "mint") drawMintShooter(context, size, unit.pulse, unit.level);
+  else drawCapsuleShooter(context, size, unit.pulse, unit.level);
 }
 
 /** 药材栏里的图标。 */
@@ -336,7 +396,7 @@ export function drawZdUnitIcon(context: Context, kind: ZdUnitKind, size: number)
   context.save();
   context.translate(size / 2, size / 2 + size * 0.02);
   const definition = ZD_UNITS[kind];
-  drawUnitShape(context, kind, size * 0.98, { pulse: 0, timer: definition.interval, hp: definition.hp, maxHp: definition.hp }, 0);
+  drawUnitShape(context, kind, size * 0.98, { pulse: 0, timer: definition.interval, hp: definition.hp, maxHp: definition.hp, level: 1 }, 0);
   context.restore();
 }
 
@@ -361,6 +421,11 @@ function drawUnit(context: Context, unit: ZdUnit, layout: ZdLayout, time: number
   drawUnitShape(context, unit.kind, size, unit, time);
   context.restore();
   if (unit.kind !== "fizz") healthBar(context, x, y + size * 0.44, size * 0.56, unit.hp / unit.maxHp, "#7fe08a");
+  // 等级：格子右上角的金点，二级一颗、三级两颗。
+  for (let pip = 0; pip < unit.level - 1; pip += 1) {
+    ellipsePath(context, x + layout.cellWidth / 2 - 11 - pip * 9, y - layout.cellHeight / 2 + 11, 3.4, 3.4);
+    paint(context, GOLD, "rgba(60, 40, 8, .8)", 1);
+  }
 }
 
 const ZOMBIE_LOOK: Record<ZdZombieKind, { scale: number; coat: string; skin: string; pace: number }> = {
@@ -592,10 +657,22 @@ function drawEffect(context: Context, effect: ZdEffect, layout: ZdLayout) {
     context.textBaseline = "middle";
     context.lineWidth = 3;
     context.strokeStyle = "rgba(40, 28, 8, .75)";
-    context.strokeText(`+${ZD_RULES.passiveEnergy}`, x, y - 8 - progress * 24);
+    const label = `+${effect.amount ?? ZD_RULES.passiveEnergy}`;
+    context.strokeText(label, x, y - 8 - progress * 24);
     context.fillStyle = GOLD;
-    context.fillText(`+${ZD_RULES.passiveEnergy}`, x, y - 8 - progress * 24);
+    context.fillText(label, x, y - 8 - progress * 24);
     context.globalAlpha = 1;
+  } else if (effect.kind === "level") {
+    // 升级：一圈金光加几颗上升的星点
+    ellipsePath(context, x, y, layout.cellWidth * (0.25 + progress * 0.35), layout.cellHeight * (0.25 + progress * 0.35));
+    context.lineWidth = 3 * (1 - progress) + 0.5;
+    context.strokeStyle = `rgba(255, 209, 102, ${1 - progress})`;
+    context.stroke();
+    for (const [dx, speed] of [[-16, 30], [0, 44], [15, 34]]) {
+      ellipsePath(context, x + dx, y - progress * speed, 3 * (1 - progress) + 1, 3 * (1 - progress) + 1);
+      context.fillStyle = `rgba(255, 230, 150, ${1 - progress})`;
+      context.fill();
+    }
   } else {
     for (const [dx, dy, r] of [[-10, 0, 12], [8, -4, 14], [0, 8, 10]]) {
       ellipsePath(context, x + dx * (1 + progress), y + dy * (1 + progress) - progress * 8, r * (1 + progress * 0.5), r * (1 + progress * 0.5));
@@ -611,6 +688,7 @@ export function drawZdScene(context: Context, scene: ZdSceneState) {
   context.clearRect(0, 0, scene.width, scene.height);
   drawBoard(context, scene, layout);
   drawSelection(context, scene, layout);
+  drawFocus(context, scene, layout);
   for (const unit of [...game.units].sort((left, right) => left.row - right.row)) drawUnit(context, unit, layout, game.time);
   for (const shot of game.shots) drawShot(context, shot, layout);
   for (const zombie of [...game.zombies].sort((left, right) => left.y - right.y)) drawZombie(context, zombie, layout, game.time);
@@ -627,6 +705,6 @@ export function drawZdMenuArt(context: Context, size: number) {
   context.save();
   context.translate(size * 0.3, size * 0.6);
   context.rotate(0.42);
-  drawUnitShape(context, "capsule", size * 0.5, { pulse: 0, timer: 0, hp: 1, maxHp: 1 }, 0);
+  drawUnitShape(context, "capsule", size * 0.5, { pulse: 0, timer: 0, hp: 1, maxHp: 1, level: 1 }, 0);
   context.restore();
 }

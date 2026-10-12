@@ -4,7 +4,7 @@
 export type ZdUnitKind = "mortar" | "capsule" | "mint" | "cabinet" | "fizz";
 export type ZdZombieKind = "walker" | "runner" | "beaker" | "giant";
 export type ZdShotKind = "capsule" | "mint";
-export type ZdEvent = "place" | "remove" | "shoot" | "hit" | "energy" | "boom" | "wave" | "bigWave" | "lost";
+export type ZdEvent = "place" | "remove" | "upgrade" | "shoot" | "hit" | "energy" | "boom" | "wave" | "bigWave" | "lost";
 
 export const ZD_RULES = {
   lanes: 5,
@@ -27,8 +27,10 @@ export const ZD_RULES = {
   budgetQuadratic: 0.3,
   bigWaveEvery: 5,
   bigWaveFactor: 1.4,
-  // 僵尸血量每波递增，摆满药圃也终究守不住。
+  // 僵尸血量每波递增；到后期改成按比例连涨，升满的药圃也终究守不住。
   hpGrowthPerWave: 0.06,
+  hpCompoundFromWave: 12,
+  hpCompoundRate: 1.1,
   pointsPerBudget: 10,
 } as const;
 
@@ -57,6 +59,62 @@ export const ZD_UNITS: Record<ZdUnitKind, ZdUnitDefinition> = {
 
 export const ZD_UNIT_ORDER: readonly ZdUnitKind[] = ["mortar", "capsule", "mint", "cabinet", "fizz"];
 
+export const ZD_MAX_LEVEL = 3;
+// 三连发里相邻两颗胶囊的间隔（秒）。
+const BURST_GAP_SECONDS = 0.12;
+
+export interface ZdUpgrade {
+  cost: number;
+  summary: string;
+}
+
+/** 每种药材升到 2 级、3 级的花费和效果；泡腾片是一次性的，不能升级。 */
+export const ZD_UPGRADES: Record<ZdUnitKind, readonly ZdUpgrade[]> = {
+  mortar: [{ cost: 50, summary: "每次磨出 50 药力" }, { cost: 100, summary: "每次磨出 85 药力" }],
+  capsule: [{ cost: 75, summary: "两连发，胶囊更重" }, { cost: 125, summary: "三连发，胶囊再加重" }],
+  mint: [{ cost: 100, summary: "伤害更高，减速更久" }, { cost: 150, summary: "命中时连旁边的僵尸一起打、一起减速" }],
+  cabinet: [{ cost: 50, summary: "加厚一倍，升级时顺便修好" }, { cost: 100, summary: "再加厚，啃它的僵尸会受伤" }],
+  fizz: [],
+};
+
+export interface ZdUnitStats {
+  hp: number;
+  damage: number;
+  /** 一次齐射的发数。 */
+  shots: number;
+  /** 研钵每次磨出的药力。 */
+  energy: number;
+  slowSeconds: number;
+  /** 命中时波及相邻僵尸。 */
+  splash: boolean;
+  /** 每秒反伤啃咬者。 */
+  thorns: number;
+}
+
+/** 某种药材在某一级的数值。 */
+export function zdUnitStats(kind: ZdUnitKind, level: number): ZdUnitStats {
+  const tier = Math.min(ZD_MAX_LEVEL, Math.max(1, level)) - 1;
+  const base = ZD_UNITS[kind];
+  const stats: ZdUnitStats = { hp: base.hp, damage: base.damage, shots: 1, energy: 0, slowSeconds: 0, splash: false, thorns: 0 };
+  if (kind === "mortar") {
+    stats.energy = [ZD_RULES.passiveEnergy, 50, 85][tier];
+    stats.hp = [base.hp, 100, 130][tier];
+  } else if (kind === "capsule") {
+    stats.shots = tier + 1;
+    stats.damage = [base.damage, 22, 26][tier];
+    stats.hp = [base.hp, 120, 150][tier];
+  } else if (kind === "mint") {
+    stats.damage = [base.damage, 25, 35][tier];
+    stats.slowSeconds = [ZD_RULES.slowSeconds, 5, 5][tier];
+    stats.splash = tier === 2;
+    stats.hp = [base.hp, 120, 150][tier];
+  } else if (kind === "cabinet") {
+    stats.hp = [base.hp, 1400, 2400][tier];
+    stats.thorns = tier === 2 ? 30 : 0;
+  }
+  return stats;
+}
+
 export interface ZdZombieDefinition {
   kind: ZdZombieKind;
   name: string;
@@ -83,10 +141,15 @@ export interface ZdUnit {
   kind: ZdUnitKind;
   lane: number;
   row: number;
+  /** 1 到 3 级。 */
+  level: number;
   hp: number;
   maxHp: number;
   /** 距离下一次攻击、产出或引爆的秒数。 */
   timer: number;
+  /** 连发时还没打出去的发数，以及距离下一发的秒数。 */
+  burst: number;
+  burstTimer: number;
   /** 刚开火或刚产出后的动画余量（秒）。 */
   pulse: number;
   hurt: number;
@@ -110,14 +173,18 @@ export interface ZdShot {
   lane: number;
   y: number;
   damage: number;
+  slowSeconds: number;
+  splash: boolean;
 }
 
 export interface ZdEffect {
-  kind: "boom" | "energy" | "puff";
+  kind: "boom" | "energy" | "puff" | "level";
   lane: number;
   y: number;
   age: number;
   life: number;
+  /** 飘出的药力数字。 */
+  amount?: number;
 }
 
 export interface ZdSpawn {
@@ -170,7 +237,8 @@ export function zdWaveBudget(wave: number) {
 }
 
 export function zdWaveHpScale(wave: number) {
-  return 1 + ZD_RULES.hpGrowthPerWave * Math.max(0, wave - 1);
+  const rules = ZD_RULES;
+  return (1 + rules.hpGrowthPerWave * Math.max(0, wave - 1)) * rules.hpCompoundRate ** Math.max(0, wave - rules.hpCompoundFromWave);
 }
 
 /** 第 wave 波开始的对局时间（秒）。 */
@@ -190,10 +258,10 @@ export function zdZombiePoints(kind: ZdZombieKind) {
 }
 
 export function zdCommanderRank(score: number) {
-  if (score >= 2000) return "药圃战神";
-  if (score >= 1200) return "防线统帅";
-  if (score >= 500) return "护圃能手";
-  if (score >= 150) return "见习园丁";
+  if (score >= 4000) return "药圃战神";
+  if (score >= 2200) return "防线统帅";
+  if (score >= 900) return "护圃能手";
+  if (score >= 200) return "见习园丁";
   return "新手药童";
 }
 
@@ -245,14 +313,48 @@ export function zdPlace(state: ZdState, kind: ZdUnitKind, lane: number, row: num
     kind,
     lane,
     row,
+    level: 1,
     hp: definition.hp,
     maxHp: definition.hp,
     // 研钵先磨半轮再出第一份药力；射手落地后稍等一拍再开火。
     timer: kind === "mortar" ? definition.interval * 0.55 : kind === "fizz" ? definition.interval : 0.4,
+    burst: 0,
+    burstTimer: 0,
     pulse: 0,
     hurt: 0,
   });
   state.events.push("place");
+  return true;
+}
+
+/** 这株药材的下一级；已经满级或不能升级时返回 null。 */
+export function zdNextUpgrade(unit: Pick<ZdUnit, "kind" | "level">) {
+  return ZD_UPGRADES[unit.kind][unit.level - 1] ?? null;
+}
+
+/** 不能升级时返回原因；可以升级返回 null。 */
+export function zdUpgradeBlocker(state: ZdState, lane: number, row: number) {
+  if (state.over) return "对局已结束";
+  const unit = zdUnitAt(state, lane, row);
+  if (!unit) return "这一格没有药材";
+  const next = zdNextUpgrade(unit);
+  if (!next) return unit.kind === "fizz" ? "泡腾片不能升级" : "已经满级";
+  if (state.energy < next.cost) return "药力不够";
+  return null;
+}
+
+export function zdUpgrade(state: ZdState, lane: number, row: number) {
+  if (zdUpgradeBlocker(state, lane, row)) return false;
+  const unit = zdUnitAt(state, lane, row)!;
+  state.energy -= zdNextUpgrade(unit)!.cost;
+  unit.level += 1;
+  const stats = zdUnitStats(unit.kind, unit.level);
+  // 药柜升级时修好；其他药材只加上新增的那部分血量。
+  unit.hp = unit.kind === "cabinet" ? stats.hp : unit.hp + (stats.hp - unit.maxHp);
+  unit.maxHp = stats.hp;
+  unit.pulse = 0.3;
+  state.effects.push({ kind: "level", lane: unit.lane, y: unit.row + 0.5, age: 0, life: 0.6 });
+  state.events.push("upgrade");
   return true;
 }
 
@@ -318,19 +420,42 @@ function damageZombie(zombie: ZdZombie, amount: number) {
   zombie.hurt = 0.12;
 }
 
+function fire(state: ZdState, unit: ZdUnit, stats: ZdUnitStats) {
+  unit.pulse = 0.18;
+  state.shots.push({
+    id: state.nextId++,
+    kind: unit.kind === "mint" ? "mint" : "capsule",
+    lane: unit.lane,
+    y: unit.row + 0.2,
+    damage: stats.damage,
+    slowSeconds: stats.slowSeconds,
+    splash: stats.splash,
+  });
+  state.events.push("shoot");
+}
+
 function stepUnits(state: ZdState, delta: number) {
   for (const unit of state.units) {
     unit.pulse = Math.max(0, unit.pulse - delta);
     unit.hurt = Math.max(0, unit.hurt - delta);
     const definition = ZD_UNITS[unit.kind];
     if (unit.kind === "cabinet") continue;
+    const stats = zdUnitStats(unit.kind, unit.level);
+    if (unit.burst > 0) {
+      unit.burstTimer -= delta;
+      if (unit.burstTimer <= 0) {
+        fire(state, unit, stats);
+        unit.burst -= 1;
+        unit.burstTimer += BURST_GAP_SECONDS;
+      }
+    }
     unit.timer -= delta;
     if (unit.timer > 0) continue;
     if (unit.kind === "mortar") {
-      state.energy += ZD_RULES.passiveEnergy;
+      state.energy += stats.energy;
       unit.timer += definition.interval;
       unit.pulse = 0.5;
-      state.effects.push({ kind: "energy", lane: unit.lane, y: unit.row + 0.3, age: 0, life: 0.9 });
+      state.effects.push({ kind: "energy", lane: unit.lane, y: unit.row + 0.3, age: 0, life: 0.9, amount: stats.energy });
       state.events.push("energy");
     } else if (unit.kind === "fizz") {
       for (const zombie of state.zombies) {
@@ -347,9 +472,9 @@ function stepUnits(state: ZdState, delta: number) {
         continue;
       }
       unit.timer += definition.interval;
-      unit.pulse = 0.18;
-      state.shots.push({ id: state.nextId++, kind: unit.kind === "mint" ? "mint" : "capsule", lane: unit.lane, y: unit.row + 0.2, damage: definition.damage });
-      state.events.push("shoot");
+      fire(state, unit, stats);
+      unit.burst = stats.shots - 1;
+      unit.burstTimer = BURST_GAP_SECONDS;
     }
   }
 }
@@ -367,7 +492,14 @@ function stepShots(state: ZdState, delta: number) {
     }
     if (!target) continue;
     damageZombie(target, shot.damage);
-    if (shot.kind === "mint") target.slow = ZD_RULES.slowSeconds;
+    if (shot.slowSeconds > 0) target.slow = Math.max(target.slow, shot.slowSeconds);
+    if (shot.splash) {
+      for (const zombie of state.zombies) {
+        if (zombie === target || zombie.hp <= 0 || Math.abs(zombie.lane - target.lane) > 1 || Math.abs(zombie.y - target.y) > 0.8) continue;
+        damageZombie(zombie, shot.damage * 0.4);
+        zombie.slow = Math.max(zombie.slow, shot.slowSeconds);
+      }
+    }
     shot.damage = 0;
     state.events.push("hit");
   }
@@ -386,6 +518,7 @@ function stepZombies(state: ZdState, delta: number) {
     if (blocker) {
       blocker.hp -= definition.bite * factor * delta;
       blocker.hurt = 0.12;
+      zombie.hp -= zdUnitStats(blocker.kind, blocker.level).thorns * delta;
       continue;
     }
     zombie.y += definition.speed * factor * delta;
