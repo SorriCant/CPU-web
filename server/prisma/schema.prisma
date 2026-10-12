@@ -167,6 +167,8 @@ model User {
   zombieDefenseAchievements    ZombieDefenseAchievement[]
   yaodaNaiAttempts             YaodaNaiAttempt[]
   yaodaNaiAchievements         YaodaNaiAchievement[]
+  greedyNailongAttempts        GreedyNailongAttempt[]
+  greedyNailongAchievements    GreedyNailongAchievement[]
   blocksOwned                 UserBlock[] @relation("BlockOwner")
   blocksReceived              UserBlock[] @relation("BlockTarget")
 
@@ -1568,6 +1570,37 @@ model YaodaNaiAttempt {
 }
 
 model YaodaNaiAchievement {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  code       String
+  unlockedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, code])
+  @@index([userId, unlockedAt])
+  @@index([code, unlockedAt])
+}
+
+model GreedyNailongAttempt {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  score       Int?
+  foods       Int?
+  length      Int?
+  durationMs  Int?
+  status      String    @default("active")
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, score])
+  @@index([status, completedAt])
+  @@index([userId, startedAt])
+}
+
+model GreedyNailongAchievement {
   id         Int      @id @default(autoincrement())
   userId     Int
   code       String

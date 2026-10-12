@@ -4,7 +4,7 @@ export interface MiniGame {
   summary: string;
   routeName: string;
   cover: string;
-  hue: "blue" | "orange" | "green" | "amber";
+  hue: "blue" | "orange" | "green" | "amber" | "violet";
   tags: string[];
   /** 本机最高分的 localStorage 键；合集页的“我的最高”取它和云端最高分里较大的一个。 */
   bestStorageKey: string;
@@ -61,5 +61,16 @@ export const miniGames: MiniGame[] = [
     tags: ["全校排行", "14 枚成就"],
     bestStorageKey: "cpu-web:yaoda-nai:v1:best",
     leaderboardPath: "/tools/yaoda-nai/leaderboard",
+  },
+  {
+    slug: "greedy-nailong",
+    name: "贪吃奶龙",
+    summary: "滑动带路，吃得越多身子越长",
+    routeName: "service-greedy-nailong",
+    cover: "🐉",
+    hue: "violet",
+    tags: ["全校排行", "14 枚成就"],
+    bestStorageKey: "cpu-web:greedy-nailong:v1:best",
+    leaderboardPath: "/tools/greedy-nailong/leaderboard",
   },
 ];
