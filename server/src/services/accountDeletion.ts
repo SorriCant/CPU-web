@@ -140,6 +140,7 @@ async function eraseAccountData(tx: Prisma.TransactionClient, userId: number, pa
     ["oAuthAuthorizationCode", "userId"], ["oAuthAccessToken", "userId"], ["userVerificationApplication", "userId"], ["yaodaFlightAttempt", "userId"], ["yaodaFlightAchievement", "userId"],
     ["tomatoNoodleAttempt", "userId"], ["tomatoNoodleAchievement", "userId"],
     ["zombieDefenseAttempt", "userId"], ["zombieDefenseAchievement", "userId"],
+    ["yaodaNaiAttempt", "userId"], ["yaodaNaiAchievement", "userId"],
   ] as const) await (tx[model] as any).deleteMany({ where: { [key]: userId } });
   await tx.teacher.updateMany({ where: { createdById: userId }, data: { createdById: null } });
   await tx.iosClientInstall.updateMany({ where: { userId }, data: { userId: null } });

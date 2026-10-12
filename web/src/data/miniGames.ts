@@ -4,7 +4,7 @@ export interface MiniGame {
   summary: string;
   routeName: string;
   cover: string;
-  hue: "blue" | "orange" | "green";
+  hue: "blue" | "orange" | "green" | "amber";
   tags: string[];
   /** 本机最高分的 localStorage 键；合集页的“我的最高”取它和云端最高分里较大的一个。 */
   bestStorageKey: string;
@@ -12,7 +12,7 @@ export interface MiniGame {
   leaderboardPath: string;
 }
 
-// 合集页的路径。两个游戏页的路径都在 /services/tools/yaoda-can-fly 之下：
+// 合集页的路径。各个游戏页的路径都在 /services/tools/yaoda-can-fly 之下：
 // 已发布的原生壳只对这个前缀隐藏自己的顶栏和底栏，新游戏放在别处会被底栏挡住。
 export const MINI_GAMES_PATH = "/services/tools/games";
 
@@ -49,5 +49,16 @@ export const miniGames: MiniGame[] = [
     tags: ["全校排行", "14 枚成就"],
     bestStorageKey: "cpu-web:zombie-defense:v1:best",
     leaderboardPath: "/tools/zombie-defense/leaderboard",
+  },
+  {
+    slug: "yaoda-nai",
+    name: "合成药大奶",
+    summary: "两只一样的奶蛙撞一起，合成更大的一只",
+    routeName: "service-yaoda-nai",
+    cover: "🐸",
+    hue: "amber",
+    tags: ["全校排行", "14 枚成就"],
+    bestStorageKey: "cpu-web:yaoda-nai:v1:best",
+    leaderboardPath: "/tools/yaoda-nai/leaderboard",
   },
 ];
