@@ -12,8 +12,9 @@ export interface MiniGame {
   leaderboardPath: string;
 }
 
-// 合集页的路径。各个游戏页的路径都在 /services/tools/yaoda-can-fly 之下：
-// 已发布的原生壳只对这个前缀隐藏自己的顶栏和底栏，新游戏放在别处会被底栏挡住。
+// 合集页的路径。新游戏要全屏，路由上有两件事都得做：
+// 1. 路径放在 /services/tools/yaoda-can-fly 之下：已发布的安卓和 iOS 壳只对这个前缀隐藏自己的顶栏和底栏；
+// 2. 路由 meta 带 immersive: true：鸿蒙壳不看路径，看网页里有没有站点顶栏，带上它布局就不渲染顶栏。
 export const MINI_GAMES_PATH = "/services/tools/games";
 
 export const miniGames: MiniGame[] = [

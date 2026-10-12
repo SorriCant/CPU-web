@@ -907,7 +907,7 @@ function writeStorage(key: string, value: string) {
 .noodle-gauge {
   position: absolute;
   right: 18px;
-  bottom: max(22px, env(safe-area-inset-bottom));
+  bottom: max(22px, var(--game-safe-bottom));
   left: 18px;
   padding: 10px 14px 9px;
   border: 3px solid #403c39;

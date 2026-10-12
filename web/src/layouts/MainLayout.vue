@@ -17,7 +17,7 @@
     :style="layoutStyle"
   >
     <!-- Native shells supply their own navigation; detail pages own theirs. -->
-    <header v-if="!hideChrome && !useNativeShell && !mobileTopicChrome" class="topbar">
+    <header v-if="!hideChrome && !useNativeShell && !mobileTopicChrome && !immersivePage" class="topbar">
       <div class="topbar-inner">
         <router-link to="/home" class="brand">
           <img
@@ -470,6 +470,9 @@ const messageAriaLabel = computed(() => {
 /** 某些路由（如 /schedule）希望"裸壳"渲染，没有顶栏/免责声明/footer */
 const hideChrome = computed(() => Boolean(route.meta?.hideChrome)
   || (useIosNextShell.value && route.meta?.nativeChrome === "page"));
+// 铺满全屏的页面（小游戏）不渲染站点顶栏：页面本来就盖住了它，而鸿蒙壳是按网页里有没有这条顶栏
+// 来决定显不显示自己的顶栏和底栏的，不渲染它，游戏在鸿蒙里才是全屏。
+const immersivePage = computed(() => Boolean(route.meta?.immersive));
 const fullWidthContent = computed(() => Boolean(route.meta?.fullWidthContent));
 const fullHeightContent = computed(() => Boolean(route.meta?.fullHeightContent));
 const useFlutterShell = computed(() => isFlutterNativeShell());

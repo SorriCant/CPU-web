@@ -172,3 +172,27 @@ test('药苑之声 owns its navigation, so the shell shows no top bar or tab bar
   assert.match(source, /this\.webHeader\.visible && !this\.requiresLogin && !this\.pageOwnsChrome \? Visibility\.Visible/);
   assert.match(source, /!this\.webOverlayVisible && !this\.pageOwnsChrome\)\) \? Visibility\.Visible : Visibility\.Hidden/);
 });
+
+test('小游戏页不渲染站点顶栏，壳据此隐藏自己的顶栏和底栏，游戏全屏', () => {
+  // 壳按网页里有没有站点顶栏决定显不显示自己的两条栏（已发布的版本也是这样），所以只改网页就能全屏。
+  const header = readFileSync(new URL('../bridge/header.ts', import.meta.url), 'utf8');
+  assert.match(header, /visible: Boolean\(doc\.querySelector\('\.layout-root > \.topbar'\)\)/);
+  const index = readFileSync(new URL('../entry/src/main/ets/pages/Index.ets', import.meta.url), 'utf8');
+  assert.match(index, /this\.startupFinished && this\.webHeader\.visible && !this\.webOverlayVisible/);
+  const layout = readFileSync(new URL('../../web/src/layouts/MainLayout.vue', import.meta.url), 'utf8');
+  assert.match(layout, /<header v-if="[^"]*!immersivePage[^"]*" class="topbar">/);
+  assert.match(layout, /const immersivePage = computed\(\(\) => Boolean\(route\.meta\?\.immersive\)\);/);
+  const router = readFileSync(new URL('../../web/src/router/index.ts', import.meta.url), 'utf8');
+  const routeLine = (name) => router.split('\n').find((line) => line.includes(`name: "${name}"`)) || '';
+  for (const name of ['service-yaoda-can-fly', 'service-tomato-egg-noodles', 'service-zombie-defense', 'service-yaoda-nai']) {
+    assert.match(routeLine(name), /immersive: true/, name);
+  }
+  // 合集页是普通页面，保留壳的顶栏和底栏。
+  assert.doesNotMatch(routeLine('service-games'), /immersive/);
+  // 没有底栏以后，游戏底部按手势条的高度留白。
+  const shell = readFileSync(new URL('../../web/src/views/services/games/gameShell.css', import.meta.url), 'utf8');
+  assert.match(shell, /--game-safe-bottom: max\(env\(safe-area-inset-bottom, 0px\), calc\(var\(--cpu-harmony-bottom-clearance, 72px\) - 72px\)\);/);
+  const layoutSource = readFileSync(new URL('../entry/src/main/ets/common/NativeNavigationLayout.ets', import.meta.url), 'utf8');
+  assert.match(layoutSource, /NATIVE_TAB_BAR_HEIGHT: number = 56;/);
+  assert.match(layoutSource, /return NATIVE_TAB_BAR_HEIGHT \+ nativeNavigationBottomInset\(systemInsetVp\) \+ 8;/);
+});

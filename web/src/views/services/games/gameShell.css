@@ -12,6 +12,9 @@
   --blue: #2f80ed;
   --blue-dark: #1e5cac;
   --school-blue: #123f91;
+  /* 屏幕底部要让开的高度（手势条）。鸿蒙壳不提供 safe-area，只给了“底栏高度 + 手势条 + 间距”的总和；
+     游戏页没有底栏，减掉底栏那 72 就是手势条要让开的高度。别的客户端没有这个变量，这一项算出来是 0。 */
+  --game-safe-bottom: max(env(safe-area-inset-bottom, 0px), calc(var(--cpu-harmony-bottom-clearance, 72px) - 72px));
   position: fixed;
   inset: 0;
   z-index: 5000;
@@ -528,7 +531,7 @@
   }
   .menu-screen { padding-right: 28px; padding-left: 28px; }
   .panel-header { padding-top: max(12px, env(safe-area-inset-top)); }
-  .panel-scroll { padding-bottom: max(14px, env(safe-area-inset-bottom)); }
+  .panel-scroll { padding-bottom: max(14px, var(--game-safe-bottom)); }
 }
 
 @media (max-height: 720px) {
