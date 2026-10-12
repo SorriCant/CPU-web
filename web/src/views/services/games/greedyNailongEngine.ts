@@ -10,8 +10,8 @@ export const NL_RULES = {
   stepStart: 0.2,
   stepMin: 0.085,
   stepEase: 0.966,
-  /** 提前按下的转向最多记两个，拐急弯时不会丢。 */
-  queueLimit: 2,
+  /** 提前按下的转向最多记三个，拐急弯时不会丢。 */
+  queueLimit: 3,
   /** 零食：场上一直有一份。 */
   snackScore: 10,
   /** 火锅：每吃够这么多份零食出一锅，过时不候。越早吃分越高，吃了长两节。 */
@@ -187,12 +187,21 @@ export function createNlState(seed: number): NlState {
   return state;
 }
 
-/** 转向。和最后一次定下的方向相同或相反的不算；记满了也不再记。返回这一下有没有记上。 */
+/**
+ * 转向。和最后一次定下的方向相同的不算，掉头不行，记满了也不再记。
+ * 刚按了一边、还没来得及拐又按了反方向（比如先左后右），以后按的为准。返回这一下有没有记上。
+ */
 export function nlTurn(state: NlState, direction: NlDirection) {
   if (state.over) return false;
-  const last = state.queue.length ? state.queue[state.queue.length - 1] : state.direction;
-  if (direction === last || direction === OPPOSITE[last] || state.queue.length >= NL_RULES.queueLimit) return false;
-  state.queue.push(direction);
+  const queue = state.queue;
+  const last = queue.length ? queue[queue.length - 1] : state.direction;
+  if (direction === last) return false;
+  if (direction === OPPOSITE[last]) {
+    // 和正在走的方向相反是掉头；和还没拐的那一下相反，就是改主意了，换成新的。
+    if (!queue.length) return false;
+    queue[queue.length - 1] = direction;
+  } else if (queue.length >= NL_RULES.queueLimit) return false;
+  else queue.push(direction);
   state.events.push({ type: "turn" });
   return true;
 }
@@ -289,12 +298,20 @@ export function nlStep(state: NlState, delta: number) {
       state.events.push({ type: "expire", kind: item.kind });
     }
   }
-  state.stepTimer += delta;
-  let interval = nlStepSeconds(state.foods);
-  while (state.stepTimer >= interval && !state.over) {
-    state.stepTimer -= interval;
+  // 有转向等着的时候，脚下这一格按最快的速度走完再拐：开局走得慢，要是照常走完这一格，拐弯会显得不跟手。
+  // 最快也就是 stepMin 走一格，和后期的速度一样。
+  let remaining = delta;
+  while (remaining > 0 && !state.over) {
+    const interval = nlStepSeconds(state.foods);
+    const rate = state.queue.length ? Math.max(1, interval / NL_RULES.stepMin) : 1;
+    const need = Math.max(0, interval - state.stepTimer) / rate;
+    if (remaining < need) {
+      state.stepTimer += remaining * rate;
+      break;
+    }
+    remaining -= need;
+    state.stepTimer = 0;
     advance(state);
-    interval = nlStepSeconds(state.foods);
   }
-  if (state.over) state.stepTimer = interval;
+  if (state.over) state.stepTimer = nlStepSeconds(state.foods);
 }

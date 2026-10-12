@@ -38,9 +38,11 @@ import {
   type NlState,
 } from "../../web/src/views/services/games/greedyNailongEngine";
 
-/** 正好走一格。 */
+/** 正好走一格。有转向等着的时候这一格走得快，要的时间也短。 */
 function tick(state: NlState) {
-  nlStep(state, Math.max(1e-6, nlStepSeconds(state.foods) - state.stepTimer) + 1e-9);
+  const interval = nlStepSeconds(state.foods);
+  const rate = state.queue.length ? Math.max(1, interval / NL_RULES.stepMin) : 1;
+  nlStep(state, Math.max(0, interval - state.stepTimer) / rate + 1e-9);
 }
 
 function walk(state: NlState, steps: number) {
@@ -132,7 +134,7 @@ test("开局：三节长，头朝上停在场地中间，场上有一份零食",
   assert.equal(state.over, false);
 });
 
-test("一步一格往前走；转向下一步生效，不能掉头，提前按的转向最多记两个", () => {
+test("一步一格往前走；转向下一步生效，不能掉头，提前按的转向最多记三个，按反了以后按的为准", () => {
   const state = arrange(3, "up", 6, 8);
   tick(state);
   assert.deepEqual(state.snake[0], { x: 6, y: 7 });
@@ -142,15 +144,58 @@ test("一步一格往前走；转向下一步生效，不能掉头，提前按�
   assert.equal(nlTurn(state, "down"), false);
   assert.equal(nlTurn(state, "up"), false);
   assert.equal(nlTurn(state, "left"), true);
-  // 排在后面的那一个以前一个为准：左之后不能接右，可以接下
-  assert.equal(nlTurn(state, "right"), false);
+  // 刚按了左、还没拐又按右：以后按的为准
+  assert.equal(nlTurn(state, "right"), true);
+  assert.deepEqual(state.queue, ["right"]);
+  assert.equal(nlTurn(state, "left"), true);
+  assert.deepEqual(state.queue, ["left"]);
+  // 排在后面的以前一个为准：左之后可以接下，再接右
   assert.equal(nlTurn(state, "down"), true);
-  assert.equal(nlTurn(state, "right"), false, "已经记满两个");
+  assert.equal(nlTurn(state, "right"), true);
+  assert.equal(nlTurn(state, "up"), false, "已经记满三个");
+  assert.deepEqual(state.queue, ["left", "down", "right"]);
+  // 记满了也还能改最后一个
+  assert.equal(nlTurn(state, "left"), true);
+  assert.deepEqual(state.queue, ["left", "down", "left"]);
   tick(state);
   assert.deepEqual(state.snake[0], { x: 5, y: 7 });
   tick(state);
   assert.deepEqual(state.snake[0], { x: 5, y: 8 });
   assert.equal(state.direction, "down");
+  tick(state);
+  assert.deepEqual(state.snake[0], { x: 4, y: 8 });
+  assert.equal(state.direction, "left");
+  assert.deepEqual(state.queue, []);
+});
+
+test("有转向等着时，脚下这一格按最快的速度走完；没有转向时照常", () => {
+  const steady = arrange(3, "up", 6, 10);
+  tick(steady);
+  const start = steady.time;
+  tick(steady);
+  assert.ok(Math.abs(steady.time - start - NL_RULES.stepStart) < 1e-4, "不转向时一格走满 " + (steady.time - start));
+
+  const eager = arrange(3, "up", 6, 10);
+  tick(eager);
+  nlTurn(eager, "left");
+  // 刚迈出这一步就按了转向：这一格只用最快的间隔就走完，然后拐弯
+  nlStep(eager, NL_RULES.stepMin - 0.005);
+  assert.deepEqual(eager.snake[0], { x: 6, y: 9 }, "还没到最快的间隔，不会提前走");
+  nlStep(eager, 0.006);
+  assert.deepEqual(eager.snake[0], { x: 5, y: 9 });
+  assert.equal(eager.direction, "left");
+  assert.ok(eager.stepTimer < 0.01);
+
+  // 这一格已经走了一大半再按：剩下的一小段立刻走完，补间不会跳
+  const late = arrange(3, "up", 6, 10);
+  tick(late);
+  nlStep(late, NL_RULES.stepStart * 0.75);
+  const before = late.stepTimer;
+  nlTurn(late, "right");
+  nlStep(late, 0.01);
+  assert.ok(late.stepTimer > before, "接着往前走，不是瞬移");
+  nlStep(late, NL_RULES.stepStart * 0.25 * (NL_RULES.stepMin / NL_RULES.stepStart));
+  assert.deepEqual(late.snake[0], { x: 7, y: 9 });
 });
 
 test("吃零食：加分、长一节，马上补一份新的；吃得越多走得越快，但有个最快的限度", () => {

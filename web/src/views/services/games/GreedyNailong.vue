@@ -57,11 +57,11 @@
         <div v-if="gamePhase === 'ready'" class="ready-hint">
           <span class="ready-flight-mark" aria-hidden="true">👆</span>
           <h2>滑动屏幕或按方向键开始</h2>
-          <p>往哪边滑，奶龙就往哪边拐。撞到墙或者咬到自己，这一局就结束</p>
+          <p>往哪边滑，奶龙就往哪边拐；点在它的哪一边，它也会往那边拐。撞到墙或者咬到自己，这一局就结束</p>
         </div>
 
         <div v-if="banner" :key="banner.id" class="nl-banner" role="status">{{ banner.text }}</div>
-        <p class="nl-hint">滑动转向 · 火锅和消食片过时不候</p>
+        <p class="nl-hint">滑动或点两边转向 · 火锅和消食片过时不候</p>
 
         <div v-if="gamePhase === 'paused'" class="modal-shade">
           <div class="game-modal">
@@ -170,7 +170,7 @@
               <small>{{ item.text }}</small>
             </span>
           </div>
-          <p>操作：触屏朝想去的方向滑动，按住不放可以连着拐弯；键盘用方向键或 W A S D，空格开始，P 暂停，Esc 返回主页。</p>
+          <p>操作：触屏朝想去的方向滑动，轻轻一划就行，按住不放可以连着拐弯；也可以直接点屏幕，点在奶龙的哪一边，它就往哪一边拐。键盘用方向键或 W A S D，空格开始，P 暂停，Esc 返回主页。</p>
         </div>
       </section>
     </section>
@@ -199,7 +199,7 @@ import {
   type NlDirection,
   type NlState,
 } from "./greedyNailongEngine";
-import { drawNlIcon, drawNlMenuArt, drawNlScene, nlArtReady, NL_FLOATER_SECONDS, type NlFloater } from "./greedyNailongScene";
+import { drawNlIcon, drawNlMenuArt, drawNlScene, nlArtReady, nlLayout, NL_FLOATER_SECONDS, type NlFloater } from "./greedyNailongScene";
 
 type Screen = "menu" | "game" | "ranking" | "achievements" | "history" | "settings";
 type GamePhase = "ready" | "playing" | "paused" | "over";
@@ -232,8 +232,10 @@ const cloudSubmitState = ref<"idle" | "syncing" | "success" | "error" | "guest">
 const cloudSubmitDetail = ref("");
 
 const WORLD_WIDTH = 420;
-/** 手指滑过这么多像素算一次转向。 */
-const SWIPE_DISTANCE = 16;
+/** 手指滑过这么多像素算一次转向；抬手时不到这么多、但超过一半的快划也算。 */
+const SWIPE_DISTANCE = 10;
+/** 按下到抬起不超过这么久、几乎没动，算点了一下。 */
+const TAP_MILLISECONDS = 400;
 const STORAGE_PREFIX = "cpu-web:greedy-nailong:v1";
 const KEY_DIRECTIONS: Record<string, NlDirection> = {
   ArrowUp: "up", KeyW: "up",
@@ -251,7 +253,8 @@ const GUIDE = [
 
 let game: NlState = createNlState(1);
 let floaters: NlFloater[] = [];
-let swipeOrigin: { id: number; x: number; y: number } | null = null;
+/** 正在进行的一次触摸：x、y 是上一次转向（或按下）的位置，startX、startY 是按下的位置。 */
+let swipeOrigin: { id: number; x: number; y: number; startX: number; startY: number; at: number; turned: boolean } | null = null;
 let worldHeight = 700;
 let lastFrameAt = 0;
 let animationFrame = 0;
@@ -399,7 +402,7 @@ function steer(direction: NlDirection) {
 function handlePointerDown(event: PointerEvent) {
   event.preventDefault();
   if (screen.value !== "game" || gamePhase.value === "over" || gamePhase.value === "paused") return;
-  swipeOrigin = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  swipeOrigin = { id: event.pointerId, x: event.clientX, y: event.clientY, startX: event.clientX, startY: event.clientY, at: performance.now(), turned: false };
   try {
     canvasEl.value?.setPointerCapture(event.pointerId);
   } catch {
@@ -414,14 +417,44 @@ function handlePointerMove(event: PointerEvent) {
   if (Math.max(Math.abs(dx), Math.abs(dy)) < SWIPE_DISTANCE) return;
   steer(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : dy > 0 ? "down" : "up");
   // 从这里重新算起：手指不抬，接着往另一边滑还能再拐。
-  swipeOrigin = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  swipeOrigin.x = event.clientX;
+  swipeOrigin.y = event.clientY;
+  swipeOrigin.turned = true;
 }
 
 function handlePointerEnd(event: PointerEvent) {
-  if (!swipeOrigin || swipeOrigin.id !== event.pointerId) return;
+  const gesture = swipeOrigin;
+  if (!gesture || gesture.id !== event.pointerId) return;
   swipeOrigin = null;
-  // 开局前点一下（没滑动）也算开始。
-  if (gamePhase.value === "ready" && event.type === "pointerup") beginRound();
+  if (event.type !== "pointerup") return;
+  // 很快的一划可能来不及收到移动事件，抬手时按划过的距离补一次。
+  const dx = event.clientX - gesture.x;
+  const dy = event.clientY - gesture.y;
+  if (Math.max(Math.abs(dx), Math.abs(dy)) >= SWIPE_DISTANCE / 2) {
+    steer(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : dy > 0 ? "down" : "up");
+    return;
+  }
+  if (gesture.turned) return;
+  // 没滑动，只是点了一下：开局前算开始，对局里按点的位置转向。
+  if (gamePhase.value === "ready") beginRound();
+  else if (performance.now() - gesture.at <= TAP_MILLISECONDS) steerToward(event.clientX, event.clientY);
+}
+
+/** 点了一下屏幕：点在奶龙的哪一边，就往哪一边拐。竖着走时看左右，横着走时看上下；点在正前正后分不出来，不算。 */
+function steerToward(clientX: number, clientY: number) {
+  const canvas = canvasEl.value;
+  if (!canvas || gamePhase.value !== "playing") return;
+  const bounds = canvas.getBoundingClientRect();
+  const scale = bounds.width / WORLD_WIDTH;
+  const layout = nlLayout(WORLD_WIDTH, worldHeight);
+  const head = game.snake[0];
+  const dx = clientX - (bounds.left + (layout.left + (head.x + 0.5) * layout.cell) * scale);
+  const dy = clientY - (bounds.top + (layout.top + (head.y + 0.5) * layout.cell) * scale);
+  // 已经记下还没拐的转向也算数，连点两下可以拐两次。
+  const heading = game.queue.length ? game.queue[game.queue.length - 1] : game.direction;
+  const upright = heading === "up" || heading === "down";
+  if (Math.abs(upright ? dx : dy) < layout.cell * scale * 0.5) return;
+  steer(upright ? (dx < 0 ? "left" : "right") : dy < 0 ? "up" : "down");
 }
 
 function handleKeydown(event: KeyboardEvent) {
