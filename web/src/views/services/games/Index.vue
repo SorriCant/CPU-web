@@ -37,13 +37,32 @@
 </template>
 
 <script setup lang="ts">
+import { onMounted, reactive } from "vue";
 import { useRouter } from "vue-router";
 import { ArrowLeft, ArrowRight, Trophy } from "@element-plus/icons-vue";
+import { request } from "@/api/request";
 import { miniGames } from "@/data/miniGames";
+import { useAuthStore } from "@/stores/auth";
 import "@/styles/page-kit.css";
 
 const router = useRouter();
-const bestScores = Object.fromEntries(miniGames.map((game) => [game.slug, readBestScore(game.bestStorageKey)]));
+const auth = useAuthStore();
+const bestScores = reactive(Object.fromEntries(miniGames.map((game) => [game.slug, readBestScore(game.bestStorageKey)])));
+
+// 本机记录只算这台设备上打的局；登录后补上账号的云端最高分，和游戏里显示的一致。
+onMounted(() => {
+  if (!auth.isLoggedIn) return;
+  for (const game of miniGames) {
+    request.get<{ me: { bestScore: number } | null }>(game.leaderboardPath, undefined, {
+      cacheTtlMs: 15_000,
+      suppressErrorMessage: true,
+      suppressAuthRedirect: true,
+      suppressAuthMessage: true,
+    }).then((board) => {
+      bestScores[game.slug] = Math.max(bestScores[game.slug], board.me?.bestScore ?? 0);
+    }).catch(() => undefined);
+  }
+});
 
 function readBestScore(key: string) {
   try {
