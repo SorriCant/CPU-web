@@ -227,6 +227,10 @@
             <button data-cpu-button="surface" type="button" :class="{ active: soundEnabled }" @click="toggleSound">{{ soundEnabled ? "开启" : "关闭" }}</button>
           </div>
           <div class="setting-row">
+            <span><b>画面风格</b><small>{{ artStyle === "classic" ? "经典：最早那一版手绘的药材和僵尸" : "新版：重新画过的药材和僵尸" }}</small></span>
+            <button data-cpu-button="surface" type="button" class="active" :aria-label="`画面风格：${artStyle === 'classic' ? '经典' : '新版'}，点击切换`" @click="toggleArtStyle">{{ artStyle === "classic" ? "经典" : "新版" }}</button>
+          </div>
+          <div class="setting-row">
             <span><b>云端档案</b><small>{{ isLoggedIn ? "排行榜、局数和成就自动保存" : "当前成绩仅保存在这台设备" }}</small></span>
             <button data-cpu-button="surface" v-if="!isLoggedIn" type="button" @click="goToLogin">登录</button>
             <b v-else class="cloud-online">已连接</b>
@@ -288,7 +292,7 @@ import {
   type ZdState,
   type ZdUnitKind,
 } from "./zombieDefenseEngine";
-import { drawZdMenuArt, drawZdScene, drawZdUnitIcon, zdArtReady, zdCellAt, zdLayout } from "./zombieDefenseScene";
+import { drawZdMenuArt, drawZdScene, drawZdUnitIcon, setZdArtStyle, zdArtReady, zdCellAt, zdLayout, type ZdArtStyle } from "./zombieDefenseScene";
 
 type Screen = "menu" | "game" | "ranking" | "achievements" | "history" | "settings";
 type GamePhase = "ready" | "playing" | "paused" | "over";
@@ -316,6 +320,7 @@ const banner = ref<{ id: number; text: string; big: boolean } | null>(null);
 const bestScore = ref(0);
 const history = ref<HistoryItem[]>([]);
 const soundEnabled = ref(true);
+const artStyle = ref<ZdArtStyle>("new");
 const isNewRecord = ref(false);
 const leaderboard = ref<ZombieDefenseRankingEntry[]>([]);
 const cloudMe = ref<ZombieDefenseRankingEntry | null>(null);
@@ -409,6 +414,8 @@ onMounted(() => {
   bestScore.value = readNumber(STORAGE_PREFIX + ":best");
   history.value = readHistory();
   soundEnabled.value = readBoolean(STORAGE_PREFIX + ":sound", true);
+  artStyle.value = localStorage.getItem(STORAGE_PREFIX + ":style") === "classic" ? "classic" : "new";
+  setZdArtStyle(artStyle.value);
   window.addEventListener("keydown", handleKeydown);
   document.addEventListener("visibilitychange", handleVisibilityChange);
   resizeObserver = new ResizeObserver(resizeCanvas);
@@ -805,6 +812,16 @@ function drawScene() {
 function drawMenuArt() {
   const context = menuArtEl.value?.getContext("2d");
   if (context) drawZdMenuArt(context, 248);
+}
+
+/** 在新版和经典两种画面之间切换，记在这台设备上；已经画出去的招牌图、图标和药圃跟着重画。 */
+function toggleArtStyle() {
+  artStyle.value = artStyle.value === "classic" ? "new" : "classic";
+  writeStorage(STORAGE_PREFIX + ":style", artStyle.value);
+  setZdArtStyle(artStyle.value);
+  drawMenuArt();
+  drawIcons();
+  drawScene();
 }
 
 function toggleSound() {

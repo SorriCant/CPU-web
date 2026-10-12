@@ -16,6 +16,7 @@ import runnerArt from "@/assets/zombie-defense/zombie-runner.webp";
 import thesisArt from "@/assets/zombie-defense/zombie-thesis.webp";
 import walkerArt from "@/assets/zombie-defense/zombie-walker.webp";
 import { darken, ellipsePath, groundShadow, lighten, paint, roundedPath, vertical, type Context } from "./gameArt";
+import { CLASSIC_ZOMBIE_LOOK, drawClassicBoard, drawClassicUnit, drawClassicZombie } from "./zombieDefenseClassicArt";
 import {
   ZD_RULES,
   ZD_UNITS,
@@ -95,6 +96,17 @@ function loadArt() {
 
 /** 图都加载完（或失败）以后完成，页面据此重画已经画出去的图标和招牌图。 */
 export const zdArtReady = loadArt();
+
+/** 画面风格：new 是插画，classic 是最早那一版手画的（zombieDefenseClassicArt.ts）。只换药材、僵尸和药圃的样子。 */
+export type ZdArtStyle = "new" | "classic";
+let artStyle: ZdArtStyle = "new";
+
+/** 换画面风格。存好的小图跟着作废，下一次画的时候按新的风格重做。 */
+export function setZdArtStyle(style: ZdArtStyle) {
+  if (style === artStyle) return;
+  artStyle = style;
+  artVersion += 1;
+}
 
 // 画面里的东西大多是重复的：棋盘、同一种药材、同一种僵尸。先按屏幕上的大小缩好存起来，
 // 对局里只贴图；后期场上几百只僵尸，每帧也只是几百次贴图。
@@ -384,6 +396,13 @@ function drawFocus(context: Context, scene: ZdSceneState, layout: ZdLayout) {
 /** 药材栏、图鉴里的图标：一张图缩进方框正中。 */
 export function drawZdUnitIcon(context: Context, kind: ZdUnitKind, size: number) {
   context.clearRect(0, 0, size, size);
+  if (artStyle === "classic") {
+    context.save();
+    context.translate(size / 2, size / 2 + size * 0.02);
+    drawClassicUnit(context, kind, size * 0.98, { pulse: 0, timer: ZD_UNITS[kind].interval, hp: 1, maxHp: 1, level: 1 }, 0);
+    context.restore();
+    return;
+  }
   const image = images.get(`u:${kind}`);
   if (!image) return;
   const scale = Math.min((size * 0.94) / image.naturalWidth, (size * 0.94) / image.naturalHeight);
@@ -433,6 +452,10 @@ function chipSprite(kind: ZdUnitKind, diameter: number) {
   return sprite(`chip:${kind}:${diameter.toFixed(1)}`, box, box, (target) => {
     ellipsePath(target, 0, 0, diameter / 2, diameter / 2);
     paint(target, vertical(target, -diameter / 2, diameter / 2, "#35505a", "#16242b"), "rgba(255, 214, 120, .95)", 1.3);
+    if (artStyle === "classic") {
+      drawClassicUnit(target, kind, diameter * 0.88, { pulse: 0, timer: ZD_UNITS[kind].interval, hp: 1, maxHp: 1, level: 1 }, 0);
+      return;
+    }
     const image = images.get(`u:${kind}`);
     if (!image) return;
     const scale = Math.min((diameter * 0.8) / image.naturalWidth, (diameter * 0.8) / image.naturalHeight);
@@ -441,8 +464,65 @@ function chipSprite(kind: ZdUnitKind, diameter: number) {
   });
 }
 
+/** 经典画面里某种药材在某个状态下的小图。动的地方（研钵的杵、开火的后坐）分成几帧，各存一张。 */
+function classicUnitSprite(kind: ZdUnitKind, level: number, pulse: number, ratio: number, time: number, size: number) {
+  let state = "0";
+  let shownPulse = 0;
+  let shownTime = 0;
+  let shownRatio = 1;
+  let timer = 0;
+  if (kind === "mortar") {
+    const frame = Math.floor((((time * 6) % TAU) / TAU) * 8) % 8;
+    shownTime = ((frame + 0.5) / 8) * (TAU / 6);
+    shownPulse = pulse > 0 ? Math.ceil(pulse * 6) / 6 : 0;
+    state = `${frame}:${shownPulse.toFixed(2)}`;
+  } else if (kind === "cabinet") {
+    shownRatio = ratio < 0.33 ? 0.2 : ratio < 0.66 ? 0.5 : 1;
+    state = String(shownRatio);
+  } else if (kind === "fizz") {
+    // 只有当小图标用的时候才会走到这里：画一颗没点着的。
+    timer = ZD_UNITS.fizz.interval;
+  } else if (pulse > 0) {
+    shownPulse = 0.1;
+    state = "1";
+  }
+  const box = size * 1.3;
+  // 三级以上的样子和三级一样，等级另外写在脚下的牌子上。
+  const look = Math.min(3, level);
+  return sprite(`cu:${kind}:${look}:${state}:${size.toFixed(1)}`, box, box, (target) => {
+    drawClassicUnit(target, kind, size, { pulse: shownPulse, timer, hp: shownRatio, maxHp: 1, level: look }, shownTime);
+  });
+}
+
+/** 经典画面里的一株药材。 */
+function drawClassicUnitBody(context: Context, unit: ZdUnit, layout: ZdLayout, time: number) {
+  const x = layout.left + (unit.lane + 0.5) * layout.cellWidth;
+  const tags = tagRow(unit, layout);
+  // 脚下有牌子的小一点、往上让一点。
+  const size = unitSize(layout) * (tags ? 0.9 : 1);
+  const y = layout.top + (unit.row + 0.5) * layout.cellHeight - tags * 0.42;
+  const shadowWidth = size * 0.76;
+  const shadowHeight = size * 0.24;
+  stamp(context, sprite(`cshadow:${size.toFixed(1)}`, shadowWidth, shadowHeight, (target) => groundShadow(target, 0, 0, size * 0.36, size * 0.11, 0.45)), x, y + size * 0.36, shadowWidth, shadowHeight);
+  if (unit.hurt > 0) context.globalAlpha = 0.62;
+  if (unit.kind === "fizz") {
+    // 泡腾片一直在鼓胀冒泡，场上最多一两颗，直接画。
+    context.save();
+    context.translate(x, y);
+    drawClassicUnit(context, unit.kind, size, unit, time);
+    context.restore();
+  } else {
+    stamp(context, classicUnitSprite(unit.kind, unit.level, unit.pulse, unit.hp / unit.maxHp, time, size), x, y, size * 1.3, size * 1.3);
+  }
+  context.globalAlpha = 1;
+}
+
 /** 一株药材的本体：图（连影子）和受击的白光。牌子和血条在最后统一画，不会被挡住。 */
 function drawUnitBody(context: Context, unit: ZdUnit, layout: ZdLayout, time: number) {
+  if (artStyle === "classic") {
+    drawClassicUnitBody(context, unit, layout, time);
+    return;
+  }
   const x = layout.left + (unit.lane + 0.5) * layout.cellWidth;
   const size = unitSize(layout);
   const base = unitBase(unit, layout);
@@ -638,11 +718,72 @@ function thinCrowd(zombies: ZdZombie[]) {
   return shown.reverse();
 }
 
+/** 经典画面里一只僵尸有多大。 */
+function classicZombieSize(zombie: ZdZombie, layout: ZdLayout) {
+  return Math.min(layout.cellWidth, layout.cellHeight) * 0.9 * CLASSIC_ZOMBIE_LOOK[zombie.kind].scale;
+}
+
+/**
+ * 经典画面里一只僵尸某一帧的小图：迈步、啃咬的姿势和左右的晃动都画在里面，连脚下的影子、减速时的蓝色，
+ * 对局里一只僵尸只是原样贴一次图。
+ */
+function classicZombieSprite(kind: ZdZombieKind, biting: boolean, frame: number, frames: number, intact: boolean, slow: boolean, size: number) {
+  // 以身体中心为准，内容上到 -0.64、下到 +0.52（含影子），左右各 0.42，再给晃动留一点边。
+  const width = size * 0.98;
+  const height = size * 1.16;
+  return sprite(`cz:${kind}:${biting ? "b" : "w"}${frame}:${intact ? 1 : 0}:${slow ? 1 : 0}`, width, height, (target) => {
+    target.translate(0, size * 0.06);
+    groundShadow(target, 0, size * 0.4, size * 0.34, size * 0.1, 0.45);
+    const angle = ((frame + 0.5) / frames) * TAU;
+    // 以脚底为轴晃。
+    target.translate(0, size * 0.4);
+    target.rotate(Math.sin(angle) * (biting ? 0.02 : 0.05));
+    target.translate(0, -size * 0.4);
+    drawClassicZombie(target, kind, biting, intact, size, biting ? 0 : Math.sin(angle), angle);
+    if (slow) {
+      // 只给已经画上去的地方罩一层蓝。
+      target.globalCompositeOperation = "source-atop";
+      target.fillStyle = "rgba(120, 210, 255, .36)";
+      target.fillRect(-width, -height, width * 2, height * 2);
+      target.globalCompositeOperation = "source-over";
+    }
+  });
+}
+
+function drawClassicZombieBody(context: Context, zombie: ZdZombie, layout: ZdLayout, time: number) {
+  const look = CLASSIC_ZOMBIE_LOOK[zombie.kind];
+  const size = classicZombieSize(zombie, layout);
+  const x = layout.left + (zombie.lane + 0.5) * layout.cellWidth;
+  // 小图的正中在脚底上方 0.46 处。
+  const y = zombieFeet(zombie, layout) - size * 0.46;
+  // 走路分 6 帧，啃咬分 4 帧（啃的时候脚不动）。
+  const frames = zombie.biting ? 4 : 6;
+  const turn = zombie.biting ? time * 15 + zombie.id : time * look.pace + zombie.id * 1.7;
+  const frame = Math.floor(((((turn % TAU) + TAU) % TAU) / TAU) * frames) % frames;
+  const intact = zombie.kind !== "beaker" || zombie.hp / zombie.maxHp > 0.4;
+  const image = classicZombieSprite(zombie.kind, zombie.biting, frame, frames, intact, zombie.slow > 0, size);
+  const alpha = Math.min(1, Math.max(0, (zombie.y - ZD_RULES.spawnY) / 0.45));
+  if (alpha < 1) context.globalAlpha = alpha;
+  const width = image.width / pixel;
+  const height = image.height / pixel;
+  context.drawImage(image, Math.round((x - width / 2) * pixel) / pixel, Math.round((y - height / 2) * pixel) / pixel, width, height);
+  // 刚挨打的一瞬间闪一下白。
+  if (zombie.hurt > 0.07) {
+    context.globalAlpha = alpha * 0.6;
+    stamp(context, glowSprite("hit", "rgba(255, 255, 255, .8)", "rgba(255, 255, 255, .4)", "rgba(255, 255, 255, 0)"), x, y, size * 0.8, size * 1.05);
+  }
+  context.globalAlpha = 1;
+}
+
 /**
  * 画一只僵尸：走路时左、正、右三种歪法轮着来，一步一颠；啃咬时往前一下一下地扑。
  * 三种歪法各是一张存好的图，对局里只是原样贴图。
  */
 function drawZombieBody(context: Context, zombie: ZdZombie, layout: ZdLayout, time: number) {
+  if (artStyle === "classic") {
+    drawClassicZombieBody(context, zombie, layout, time);
+    return;
+  }
   const look = ZOMBIE_LOOK[zombie.kind];
   const tall = zombieHeight(layout) * look.scale;
   const x = layout.left + (zombie.lane + 0.5) * layout.cellWidth;
@@ -869,7 +1010,8 @@ export function drawZdScene(context: Context, scene: ZdSceneState) {
   // 天色、草地和路牙不会变，整张存起来。
   const board = sprite("board", scene.width, scene.height, (target) => {
     target.translate(-scene.width / 2, -scene.height / 2);
-    drawBoard(target, scene, layout);
+    if (artStyle === "classic") drawClassicBoard(target, scene, layout);
+    else drawBoard(target, scene, layout);
   });
   context.drawImage(board, 0, 0, scene.width, scene.height);
   drawSelection(context, scene, layout);
@@ -897,7 +1039,7 @@ export function drawZdScene(context: Context, scene: ZdSceneState) {
   for (const unit of units) drawUnitTags(context, unit, layout);
   for (const zombie of zombies) {
     if (zombie.y - ZD_RULES.spawnY < 0.45) continue;
-    const tall = zombieHeight(layout) * ZOMBIE_LOOK[zombie.kind].scale;
+    const tall = artStyle === "classic" ? classicZombieSize(zombie, layout) * 1.08 : zombieHeight(layout) * ZOMBIE_LOOK[zombie.kind].scale;
     healthBar(context, layout.left + (zombie.lane + 0.5) * layout.cellWidth, zombieFeet(zombie, layout) - tall - 7, tall * 0.42, zombie.hp / zombie.maxHp, "#ff7a66");
   }
   drawEffects(context, game.effects, layout);
@@ -906,6 +1048,18 @@ export function drawZdScene(context: Context, scene: ZdSceneState) {
 /** 主菜单的招牌图：一名胶囊射手对着一只僵尸。 */
 export function drawZdMenuArt(context: Context, size: number) {
   context.clearRect(0, 0, size, size);
+  if (artStyle === "classic") {
+    context.save();
+    context.translate(size * 0.66, size * 0.5);
+    drawClassicZombie(context, "walker", false, true, size * 0.62, 0.24, 0);
+    context.restore();
+    context.save();
+    context.translate(size * 0.3, size * 0.6);
+    context.rotate(0.42);
+    drawClassicUnit(context, "capsule", size * 0.5, { pulse: 0, timer: 0, hp: 1, maxHp: 1, level: 1 }, 0);
+    context.restore();
+    return;
+  }
   const place = (name: string, centerX: number, bottom: number, box: number) => {
     const image = images.get(name);
     if (!image) return;

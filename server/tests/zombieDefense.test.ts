@@ -1020,3 +1020,22 @@ test("云端对局接口挂在小游戏自己的路径下，账号注销时一�
   assert.match(route, /nativeChrome: "page"/u);
   assert.match(route, /miniGame: true/u);
 });
+
+test("画面风格：默认新版，设置里可以切到经典（手绘的药材、僵尸和药圃），选择记在本机", () => {
+  const page = readFileSync(new URL("../../web/src/views/services/games/YaodaVsZombies.vue", import.meta.url), "utf8");
+  const scene = readFileSync(new URL("../../web/src/views/services/games/zombieDefenseScene.ts", import.meta.url), "utf8");
+  const classic = readFileSync(new URL("../../web/src/views/services/games/zombieDefenseClassicArt.ts", import.meta.url), "utf8");
+  // 没选过的人看到的是新版；只有存的是 classic 才用经典。
+  assert.match(scene, /let artStyle: ZdArtStyle = "new";/u);
+  assert.match(page, /localStorage\.getItem\(STORAGE_PREFIX \+ ":style"\) === "classic" \? "classic" : "new"/u);
+  assert.match(page, /writeStorage\(STORAGE_PREFIX \+ ":style", artStyle\.value\)/u);
+  assert.match(page, /<b>画面风格<\/b>/u);
+  // 经典风格换掉的三样东西，画面里都有对应的分支。
+  for (const name of ["drawClassicBoard", "drawClassicUnit", "drawClassicZombie"]) {
+    assert.match(classic, new RegExp(`export function ${name}\\(`, "u"), name);
+    assert.ok(scene.split(name).length > 2, name + " 没有被画面用到");
+  }
+  // 八种药材和六种僵尸在经典风格里都有画法。
+  for (const kind of ZD_UNIT_ORDER) assert.ok(kind === "capsule" || classic.includes(`kind === "${kind}"`), kind);
+  for (const kind of Object.keys(ZD_ZOMBIES)) assert.match(classic, new RegExp(`\\b${kind}: \\{ scale:`, "u"), kind);
+});
