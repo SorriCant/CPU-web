@@ -62,7 +62,7 @@
           <div v-if="focusInfo && !tip" class="zd-upgrade">
             <span>
               <b>{{ focusInfo.name }} · {{ focusInfo.level }} 级</b>
-              <small>{{ focusInfo.next ? `升级后：${focusInfo.next.summary}` : focusInfo.kind === "fizz" ? "一次性的，不能升级" : "已经满级" }}</small>
+              <small>{{ focusInfo.next ? `升级后：${focusInfo.next.summary}` : focusInfo.kind === "fizz" ? "一次性的，不能升级" : focusInfo.graft ? "已经满级" : "已经满级，还可以再杂交一种药材" }}</small>
             </span>
             <button
               v-if="focusInfo.next"
@@ -214,6 +214,10 @@
             <small v-for="(upgrade, index) in ZD_UPGRADES[kind]" :key="index">{{ index + 2 }} 级（{{ upgrade.cost }} 药力）：{{ upgrade.summary }}</small>
           </p>
           <p>升级：不选药材时，直接点已经种下的药材，再点“升级”（或再点它一次）。最高 3 级，升级不用等冷却。</p>
+          <p>杂交：选一种药材，种到另一种已经种下的药材上，这一格就同时有两种本事，血量也更厚。杂交要付这种药材的价钱（那株已经升过级的话，再加上升到同一级的升级费），之后两种本事一起升级。每株只能杂交一次，泡腾片本身不能被杂交。</p>
+          <p v-for="kind in ZD_UNIT_ORDER" :key="'trait-' + kind" class="zd-guide">
+            <b>杂交上{{ ZD_UNITS[kind].name }}</b>{{ ZD_UNITS[kind].trait }}
+          </p>
           <p>操作：点击 / 触摸选药材和格子，数字键 1 到 5 选药材，6 选铲子，U 升级点中的药材，P 暂停，Esc 返回主页。</p>
         </div>
       </section>
@@ -238,12 +242,15 @@ import {
   createZdState,
   zdCommanderRank,
   zdCooldownRatio,
+  zdGraft,
+  zdGraftBlocker,
   zdNextUpgrade,
   zdPlace,
   zdPlaceBlocker,
   zdRemove,
   zdStep,
   zdUnitAt,
+  zdUnitName,
   zdUpgrade,
   zdUpgradeBlocker,
   ZD_UNIT_ORDER,
@@ -259,7 +266,7 @@ type Screen = "menu" | "game" | "ranking" | "achievements" | "history" | "settin
 type GamePhase = "ready" | "playing" | "paused" | "over";
 type Selection = ZdUnitKind | "shovel" | null;
 type HistoryItem = { score: number; waves: number; playedAt: string };
-type FocusInfo = { lane: number; row: number; kind: ZdUnitKind; name: string; level: number; next: ZdUpgrade | null };
+type FocusInfo = { lane: number; row: number; kind: ZdUnitKind; graft: ZdUnitKind | null; name: string; level: number; next: ZdUpgrade | null };
 
 const router = useRouter();
 const auth = useAuthStore();
@@ -319,7 +326,7 @@ const selectionHint = computed(() => {
   if (selected.value === "shovel") return "点一株药材把它移除";
   if (!selected.value) return "选药材种到空格里；点已种下的药材可以升级";
   const unit = ZD_UNITS[selected.value];
-  return `${unit.name} · ${unit.summary}`;
+  return `${unit.name} · ${unit.summary}；种到别的药材上是杂交`;
 });
 const unlockedAchievementCount = computed(() => achievements.value.filter((item) => item.unlocked).length);
 const panelTitle = computed(() => {
@@ -443,7 +450,7 @@ function selectCard(value: Exclude<Selection, null>) {
 function focusUnit(lane: number, row: number) {
   const unit = zdUnitAt(game, lane, row);
   focusInfo.value = unit
-    ? { lane, row, kind: unit.kind, name: ZD_UNITS[unit.kind].name, level: unit.level, next: zdNextUpgrade(unit) }
+    ? { lane, row, kind: unit.kind, graft: unit.graft, name: zdUnitName(unit), level: unit.level, next: zdNextUpgrade(unit) }
     : null;
 }
 
@@ -483,6 +490,10 @@ function handleCanvasPointer(event: PointerEvent) {
   if (selected.value === "shovel") {
     if (zdRemove(game, cell.lane, cell.row)) selected.value = null;
     else showTip("这一格没有药材");
+  } else if (selected.value && zdUnitAt(game, cell.lane, cell.row)) {
+    const blocker = zdGraftBlocker(game, selected.value, cell.lane, cell.row);
+    if (blocker) showTip(blocker);
+    else if (zdGraft(game, selected.value, cell.lane, cell.row)) selected.value = null;
   } else if (selected.value) {
     const blocker = zdPlaceBlocker(game, selected.value, cell.lane, cell.row);
     if (blocker) showTip(blocker);
@@ -569,9 +580,9 @@ function playEvents() {
       }
     } else if (event === "boom") playTone(110, 0.3, 0.07);
     else if (event === "place") playTone(520, 0.06, 0.035);
-    else if (event === "upgrade") {
-      playTone(660, 0.07, 0.035);
-      window.setTimeout(() => playTone(990, 0.1, 0.03), 80);
+    else if (event === "upgrade" || event === "graft") {
+      playTone(event === "graft" ? 587 : 660, 0.07, 0.035);
+      window.setTimeout(() => playTone(event === "graft" ? 880 : 990, 0.1, 0.03), 80);
     }
     else if (event === "remove") playTone(330, 0.06, 0.03);
     else if (event === "energy") playTone(988, 0.05, 0.015);
@@ -589,11 +600,13 @@ function syncHud() {
   const focus = focusInfo.value;
   if (focus) {
     const unit = zdUnitAt(game, focus.lane, focus.row);
-    if (!unit || unit.kind !== focus.kind || unit.level !== focus.level) focusUnit(focus.lane, focus.row);
+    if (!unit || unit.kind !== focus.kind || unit.graft !== focus.graft || unit.level !== focus.level) focusUnit(focus.lane, focus.row);
   }
   for (const [index, kind] of ZD_UNIT_ORDER.entries()) {
     const mask = maskEls.value[index];
-    if (mask) mask.style.height = `${zdCooldownRatio(game, kind) * 100}%`;
+    // 只在数值变了的时候才动样式，免得每一帧都触发重排。
+    const height = `${Math.round(zdCooldownRatio(game, kind) * 100)}%`;
+    if (mask && mask.style.height !== height) mask.style.height = height;
   }
 }
 
@@ -843,7 +856,8 @@ function writeStorage(key: string, value: string) {
   --blue: #4f8a3c;
   --blue-dark: #2f6b3a;
   --school-blue: #2f6b3a;
-  --zd-glass: rgba(18, 26, 30, .62);
+  /* 对局里的浮层压在不停重画的画布上，毛玻璃每一帧都要重新模糊，手机上很费，所以用不透明一点的底色。 */
+  --zd-glass: rgba(18, 26, 30, .8);
   --zd-line: rgba(255, 255, 255, .14);
   --zd-text: #f4f7f2;
   --zd-muted: rgba(244, 247, 242, .64);
@@ -882,8 +896,6 @@ function writeStorage(key: string, value: string) {
   border: 1px solid var(--zd-line);
   background: var(--zd-glass);
   box-shadow: 0 6px 18px rgba(0, 0, 0, .22);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
   color: var(--zd-text);
 }
 
@@ -956,7 +968,7 @@ function writeStorage(key: string, value: string) {
 .zd-dock {
   position: absolute;
   right: 8px;
-  bottom: max(10px, env(safe-area-inset-bottom));
+  bottom: max(10px, var(--game-safe-bottom));
   left: 8px;
 }
 .zd-hint,

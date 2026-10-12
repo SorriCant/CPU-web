@@ -50,6 +50,52 @@ const MINT = "#63d9bb";
 const GOLD = "#ffd166";
 const WOOD = "#b98556";
 const DARK = "#2b2330";
+const TAU = Math.PI * 2;
+
+// 画面里的东西大多是重复的：棋盘、同一种药材、同一种僵尸的同一帧。先画到小画布上存起来，
+// 对局里只贴图；后期场上几百只僵尸，每帧也只是几百次贴图，不用再一笔一笔画。
+const sprites = new Map<string, HTMLCanvasElement>();
+let spriteSignature = "";
+let pixel = 1;
+
+/** 画布缩放或格子大小变了，存的小图就都作废。 */
+function useSprites(context: Context, scene: ZdSceneState, layout: ZdLayout) {
+  const scale = typeof context.getTransform === "function" ? context.getTransform().a : 2;
+  pixel = Math.min(4, Math.max(0.5, scale || 1));
+  const signature = `${pixel.toFixed(3)}:${scene.width}:${scene.height.toFixed(1)}:${layout.cellHeight.toFixed(2)}`;
+  if (signature !== spriteSignature) {
+    sprites.clear();
+    spriteSignature = signature;
+  }
+}
+
+/** 取一张宽高为 width × height（画布坐标）的小图，没有就用 draw 画一张；draw 里原点在小图正中。 */
+function sprite(key: string, width: number, height: number, draw: (context: Context) => void) {
+  let canvas = sprites.get(key);
+  if (!canvas) {
+    canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.ceil(width * pixel));
+    canvas.height = Math.max(1, Math.ceil(height * pixel));
+    const context = canvas.getContext("2d");
+    if (context) {
+      context.scale(pixel, pixel);
+      context.translate(width / 2, height / 2);
+      draw(context);
+    }
+    sprites.set(key, canvas);
+  }
+  return canvas;
+}
+
+function stamp(context: Context, canvas: HTMLCanvasElement, x: number, y: number, width: number, height: number) {
+  context.drawImage(canvas, x - width / 2, y - height / 2, width, height);
+}
+
+function stampShadow(context: Context, x: number, y: number, rx: number, ry: number) {
+  const width = rx * 2.1;
+  const height = ry * 2.1;
+  stamp(context, sprite(`shadow:${rx.toFixed(1)}:${ry.toFixed(1)}`, width, height, (target) => groundShadow(target, 0, 0, rx, ry, 0.45)), x, y, width, height);
+}
 
 /** 药圃在画布里的位置：顶部让出计分牌，底部让出药材栏。 */
 export function zdLayout(width: number, height: number): ZdLayout {
@@ -134,19 +180,36 @@ function drawBoard(context: Context, scene: ZdSceneState, layout: ZdLayout) {
 
 function drawSelection(context: Context, scene: ZdSceneState, layout: ZdLayout) {
   if (!scene.selected) return;
-  const occupied = new Set(scene.game.units.map((unit) => unit.lane * 100 + unit.row));
+  const occupied = new Map(scene.game.units.map((unit) => [unit.lane * 100 + unit.row, unit]));
   const shovel = scene.selected === "shovel";
   for (let lane = 0; lane < ZD_RULES.lanes; lane += 1) {
     for (let row = 0; row < ZD_RULES.rows; row += 1) {
-      if (shovel !== occupied.has(lane * 100 + row)) continue;
-      roundedPath(context, layout.left + lane * layout.cellWidth + 5, layout.top + row * layout.cellHeight + 5, layout.cellWidth - 10, layout.cellHeight - 10, 10);
-      context.fillStyle = shovel ? "rgba(239, 90, 68, .2)" : "rgba(255, 255, 255, .07)";
+      const unit = occupied.get(lane * 100 + row);
+      // 选了药材时，另一种还没杂交过的药材也能点：种上去就是杂交。
+      const graft = !shovel && unit && unit.kind !== "fizz" && !unit.graft && unit.kind !== scene.selected;
+      if (shovel ? !unit : Boolean(unit) && !graft) continue;
+      const x = layout.left + lane * layout.cellWidth;
+      const y = layout.top + row * layout.cellHeight;
+      roundedPath(context, x + 5, y + 5, layout.cellWidth - 10, layout.cellHeight - 10, 10);
+      context.fillStyle = shovel ? "rgba(239, 90, 68, .2)" : graft ? "rgba(255, 209, 102, .1)" : "rgba(255, 255, 255, .07)";
       context.fill();
       context.setLineDash(shovel ? [] : [5, 5]);
       context.lineWidth = 1.5;
-      context.strokeStyle = shovel ? "rgba(255, 150, 130, .9)" : "rgba(255, 255, 255, .45)";
+      context.strokeStyle = shovel ? "rgba(255, 150, 130, .9)" : graft ? "rgba(255, 209, 102, .85)" : "rgba(255, 255, 255, .45)";
       context.stroke();
       context.setLineDash([]);
+      if (graft) {
+        // 左上角一个加号，提示这里是“种上去杂交”。
+        context.beginPath();
+        context.moveTo(x + 9, y + 14);
+        context.lineTo(x + 19, y + 14);
+        context.moveTo(x + 14, y + 9);
+        context.lineTo(x + 14, y + 19);
+        context.lineWidth = 2.4;
+        context.lineCap = "round";
+        context.strokeStyle = GOLD;
+        context.stroke();
+      }
     }
   }
 }
@@ -402,25 +465,65 @@ export function drawZdUnitIcon(context: Context, kind: ZdUnitKind, size: number)
 
 function healthBar(context: Context, x: number, y: number, width: number, ratio: number, color: string) {
   if (ratio >= 0.999) return;
-  roundedPath(context, x - width / 2, y, width, 4, 2);
+  // 血条每帧要画很多条，用最省事的矩形。
   context.fillStyle = "rgba(10, 14, 20, .55)";
-  context.fill();
-  roundedPath(context, x - width / 2, y, Math.max(4, width * Math.max(0, ratio)), 4, 2);
+  context.fillRect(x - width / 2, y, width, 4);
   context.fillStyle = color;
-  context.fill();
+  context.fillRect(x - width / 2, y, Math.max(3, width * Math.max(0, ratio)), 4);
+}
+
+/** 某种药材在某个状态下的小图。动的地方（研钵的杵、开火的后坐）分成几帧，各存一张。 */
+function unitSprite(kind: ZdUnitKind, level: number, pulse: number, ratio: number, time: number, size: number) {
+  let state = "0";
+  let shownPulse = 0;
+  let shownTime = 0;
+  let shownRatio = 1;
+  let timer = 0;
+  if (kind === "mortar") {
+    const frame = Math.floor((((time * 6) % TAU) / TAU) * 8) % 8;
+    shownTime = ((frame + 0.5) / 8) * (TAU / 6);
+    shownPulse = pulse > 0 ? Math.ceil(pulse * 6) / 6 : 0;
+    state = `${frame}:${shownPulse.toFixed(2)}`;
+  } else if (kind === "cabinet") {
+    shownRatio = ratio < 0.33 ? 0.2 : ratio < 0.66 ? 0.5 : 1;
+    state = String(shownRatio);
+  } else if (kind === "fizz") {
+    // 只有杂交在别的药材上才会走到这里：画一颗没点着的。
+    timer = ZD_UNITS.fizz.interval;
+  } else if (pulse > 0) {
+    shownPulse = 0.1;
+    state = "1";
+  }
+  const box = size * 1.3;
+  return sprite(`u:${kind}:${level}:${state}:${size.toFixed(1)}`, box, box, (target) => {
+    drawUnitShape(target, kind, size, { pulse: shownPulse, timer, hp: shownRatio, maxHp: 1, level }, shownTime);
+  });
 }
 
 function drawUnit(context: Context, unit: ZdUnit, layout: ZdLayout, time: number) {
   const x = layout.left + (unit.lane + 0.5) * layout.cellWidth;
   const y = layout.top + (unit.row + 0.5) * layout.cellHeight;
   const size = Math.min(layout.cellWidth, layout.cellHeight) * 0.92;
-  groundShadow(context, x, y + size * 0.36, size * 0.36, size * 0.11, 0.42);
-  context.save();
-  context.translate(x, y);
+  const ratio = unit.hp / unit.maxHp;
+  stampShadow(context, x, y + size * 0.36, size * 0.36, size * 0.11);
   if (unit.hurt > 0) context.globalAlpha = 0.62;
-  drawUnitShape(context, unit.kind, size, unit, time);
-  context.restore();
-  if (unit.kind !== "fizz") healthBar(context, x, y + size * 0.44, size * 0.56, unit.hp / unit.maxHp, "#7fe08a");
+  if (unit.kind === "fizz") {
+    // 泡腾片一直在鼓胀冒泡，场上最多一两颗，直接画。
+    context.save();
+    context.translate(x, y);
+    drawUnitShape(context, unit.kind, size, unit, time);
+    context.restore();
+  } else if (!unit.graft) {
+    stamp(context, unitSprite(unit.kind, unit.level, unit.pulse, ratio, time, size), x, y, size * 1.3, size * 1.3);
+  } else {
+    // 杂交药材：原来那株退到左后方，杂交进来的那株小一号站在右前方。
+    const main = size * 0.84;
+    const side = size * 0.6;
+    stamp(context, unitSprite(unit.kind, unit.level, unit.pulse, ratio, time, main), x - size * 0.1, y - size * 0.06, main * 1.3, main * 1.3);
+    stamp(context, unitSprite(unit.graft, unit.level, unit.pulse, ratio, time, side), x + size * 0.21, y + size * 0.17, side * 1.3, side * 1.3);
+  }
+  context.globalAlpha = 1;
+  if (unit.kind !== "fizz") healthBar(context, x, y + size * 0.44, size * 0.56, ratio, "#7fe08a");
   // 等级：格子右上角的金点，二级一颗、三级两颗。
   for (let pip = 0; pip < unit.level - 1; pip += 1) {
     ellipsePath(context, x + layout.cellWidth / 2 - 11 - pip * 9, y - layout.cellHeight / 2 + 11, 3.4, 3.4);
@@ -435,9 +538,13 @@ const ZOMBIE_LOOK: Record<ZdZombieKind, { scale: number; coat: string; skin: str
   giant: { scale: 1.36, coat: "#454266", skin: "#93b08a", pace: 4 },
 };
 
-function drawZombieBody(context: Context, zombie: Pick<ZdZombie, "kind" | "biting" | "hp" | "maxHp" | "id">, size: number, time: number) {
-  const look = ZOMBIE_LOOK[zombie.kind];
-  const stride = Math.sin(time * look.pace + zombie.id * 1.7);
+/**
+ * 画一只僵尸的一帧。stride 是迈步的幅度（-1 到 1），chew 是啃咬时手臂抖动的相位；
+ * intact 只对烧杯僵尸有用：烧杯有没有裂。
+ */
+function drawZombieBody(context: Context, kind: ZdZombieKind, biting: boolean, intact: boolean, size: number, stride: number, chew: number) {
+  const zombie = { kind, biting };
+  const look = ZOMBIE_LOOK[kind];
   const outline = darken(look.skin, 0.52);
   const coatLine = darken(look.coat, 0.4);
   context.lineJoin = "round";
@@ -476,7 +583,7 @@ function drawZombieBody(context: Context, zombie: Pick<ZdZombie, "kind" | "bitin
   }
   // 向前伸的两只手
   for (const side of [-1, 1]) {
-    const reach = zombie.biting ? Math.sin(time * 15 + side) * size * 0.04 : side * stride * size * 0.02;
+    const reach = zombie.biting ? Math.sin(chew + side) * size * 0.04 : side * stride * size * 0.02;
     roundedPath(context, side * size * 0.27 - size * 0.065, -size * 0.02 + reach, size * 0.13, size * 0.26, size * 0.065);
     paint(context, horizontal(context, side * size * 0.27 - size * 0.065, side * size * 0.27 + size * 0.065, [[0, lighten(look.coat, 0.2)], [1, darken(look.coat, 0.18)]]), coatLine, 1.3);
     ellipsePath(context, side * size * 0.27, size * 0.25 + reach, size * 0.07, size * 0.065);
@@ -523,7 +630,6 @@ function drawZombieBody(context: Context, zombie: Pick<ZdZombie, "kind" | "bitin
     context.strokeStyle = RED;
     context.stroke();
   } else if (zombie.kind === "beaker") {
-    const intact = zombie.hp / zombie.maxHp > 0.4;
     context.beginPath();
     context.moveTo(-size * 0.22, headY - size * 0.06);
     context.lineTo(-size * 0.27, headY - size * 0.36);
@@ -571,35 +677,90 @@ function drawZombieBody(context: Context, zombie: Pick<ZdZombie, "kind" | "bitin
   }
 }
 
-function drawZombie(context: Context, zombie: ZdZombie, layout: ZdLayout, time: number) {
-  const look = ZOMBIE_LOOK[zombie.kind];
-  const x = layout.left + (zombie.lane + 0.5) * layout.cellWidth;
-  const y = layout.top + zombie.y * layout.cellHeight;
-  const size = Math.min(layout.cellWidth, layout.cellHeight) * 0.9 * look.scale;
-  const alpha = Math.min(1, Math.max(0, (zombie.y - ZD_RULES.spawnY) / 0.45));
-  context.save();
-  context.globalAlpha = alpha;
-  groundShadow(context, x, y + size * 0.4, size * 0.34, size * 0.1, 0.45);
-  context.translate(x, y);
-  context.rotate(Math.sin(time * look.pace + zombie.id * 1.7) * (zombie.biting ? 0.02 : 0.05));
-  drawZombieBody(context, zombie, size, time);
-  if (zombie.slow > 0) {
-    ellipsePath(context, 0, -size * 0.02, size * 0.36, size * 0.5);
-    context.fillStyle = "rgba(120, 210, 255, .28)";
-    context.fill();
+/** 一只僵尸某一帧的小图：连脚下的影子、减速时的蓝色都画在里面，对局里一只僵尸只贴一次图。 */
+function zombieSprite(kind: ZdZombieKind, biting: boolean, frame: number, frames: number, intact: boolean, slow: boolean, size: number) {
+  // 以僵尸的原点（身体中心）为准，内容上到 -0.64、下到 +0.52（含影子），左右各 0.42。
+  const width = size * 0.84;
+  const height = size * 1.16;
+  return sprite(`z:${kind}:${biting ? "b" : "w"}${frame}:${intact ? 1 : 0}:${slow ? 1 : 0}`, width, height, (target) => {
+    target.translate(0, size * 0.06);
+    groundShadow(target, 0, size * 0.4, size * 0.34, size * 0.1, 0.45);
+    const angle = ((frame + 0.5) / frames) * TAU;
+    drawZombieBody(target, kind, biting, intact, size, biting ? 0 : Math.sin(angle), angle);
+    if (slow) {
+      // 只给已经画上去的地方罩一层蓝。
+      target.globalCompositeOperation = "source-atop";
+      target.fillStyle = "rgba(120, 210, 255, .36)";
+      target.fillRect(-width, -height, width * 2, height * 2);
+      target.globalCompositeOperation = "source-over";
+    }
+  });
+}
+
+/**
+ * 画所有僵尸。先一只一只贴图（每只直接设一次变换矩阵，带一点左右晃），
+ * 再回到正常的坐标里统一画受击的白光和血条。
+ */
+function drawZombies(context: Context, zombies: ZdZombie[], layout: ZdLayout, time: number) {
+  if (!zombies.length) return;
+  const sorted = [...zombies].sort((left, right) => left.y - right.y);
+  const cell = Math.min(layout.cellWidth, layout.cellHeight) * 0.9;
+  const base = typeof context.getTransform === "function" ? context.getTransform() : null;
+  for (const zombie of sorted) {
+    const look = ZOMBIE_LOOK[zombie.kind];
+    const x = layout.left + (zombie.lane + 0.5) * layout.cellWidth;
+    const y = layout.top + zombie.y * layout.cellHeight;
+    const size = cell * look.scale;
+    const phase = time * look.pace + zombie.id * 1.7;
+    // 走路分 6 帧，啃咬分 4 帧（啃的时候脚不动）。
+    const frames = zombie.biting ? 4 : 6;
+    const turn = zombie.biting ? time * 15 + zombie.id : phase;
+    const frame = Math.floor((((turn % TAU) + TAU) % TAU) / TAU * frames) % frames;
+    const intact = zombie.kind !== "beaker" || zombie.hp / zombie.maxHp > 0.4;
+    const image = zombieSprite(zombie.kind, zombie.biting, frame, frames, intact, zombie.slow > 0, size);
+    const width = size * 0.84;
+    const height = size * 1.16;
+    const alpha = Math.min(1, Math.max(0, (zombie.y - ZD_RULES.spawnY) / 0.45));
+    if (alpha < 1) context.globalAlpha = alpha;
+    const wobble = Math.sin(phase) * (zombie.biting ? 0.02 : 0.05);
+    if (base) {
+      const cos = Math.cos(wobble);
+      const sin = Math.sin(wobble);
+      context.setTransform(
+        base.a * cos + base.c * sin, base.b * cos + base.d * sin,
+        base.c * cos - base.a * sin, base.d * cos - base.b * sin,
+        base.a * x + base.c * y + base.e, base.b * x + base.d * y + base.f,
+      );
+      context.drawImage(image, -width / 2, -size * 0.06 - height / 2, width, height);
+    } else {
+      context.drawImage(image, x - width / 2, y - size * 0.06 - height / 2, width, height);
+    }
+    if (alpha < 1) context.globalAlpha = 1;
   }
-  if (zombie.hurt > 0) {
-    ellipsePath(context, 0, -size * 0.02, size * 0.34, size * 0.48);
-    context.fillStyle = "rgba(255, 255, 255, .45)";
-    context.fill();
+  if (base) context.setTransform(base.a, base.b, base.c, base.d, base.e, base.f);
+  for (const zombie of sorted) {
+    if (zombie.y - ZD_RULES.spawnY < 0.45) continue;
+    const x = layout.left + (zombie.lane + 0.5) * layout.cellWidth;
+    const y = layout.top + zombie.y * layout.cellHeight;
+    const size = cell * ZOMBIE_LOOK[zombie.kind].scale;
+    if (zombie.hurt > 0) {
+      ellipsePath(context, x, y - size * 0.02, size * 0.34, size * 0.48);
+      context.fillStyle = "rgba(255, 255, 255, .45)";
+      context.fill();
+    }
+    healthBar(context, x, y - size * 0.6, size * 0.5, zombie.hp / zombie.maxHp, "#ff7a66");
   }
-  context.restore();
-  if (alpha >= 1) healthBar(context, x, y - size * 0.6, size * 0.5, zombie.hp / zombie.maxHp, "#ff7a66");
 }
 
 function drawShot(context: Context, shot: ZdShot, layout: ZdLayout) {
   const x = layout.left + (shot.lane + 0.5) * layout.cellWidth;
   const y = layout.top + shot.y * layout.cellHeight;
+  // 子弹连拖尾一共 36 高，小图的正中在弹头下方 8 处。
+  stamp(context, sprite(`s:${shot.kind}`, 20, 44, (target) => paintShot(target, shot.kind, 0, -8)), x, y + 8, 20, 44);
+}
+
+function paintShot(context: Context, kind: ZdShot["kind"], x: number, y: number) {
+  const shot = { kind };
   const color = shot.kind === "mint" ? MINT : RED;
   // 拖尾
   context.fillStyle = vertical(context, y, y + 26, shot.kind === "mint" ? "rgba(99, 217, 187, .5)" : "rgba(255, 150, 120, .5)", "rgba(255, 255, 255, 0)");
@@ -685,13 +846,18 @@ function drawEffect(context: Context, effect: ZdEffect, layout: ZdLayout) {
 export function drawZdScene(context: Context, scene: ZdSceneState) {
   const layout = zdLayout(scene.width, scene.height);
   const game = scene.game;
-  context.clearRect(0, 0, scene.width, scene.height);
-  drawBoard(context, scene, layout);
+  useSprites(context, scene, layout);
+  // 天色、草地和栅栏不会变，整张存起来。
+  const board = sprite("board", scene.width, scene.height, (target) => {
+    target.translate(-scene.width / 2, -scene.height / 2);
+    drawBoard(target, scene, layout);
+  });
+  context.drawImage(board, 0, 0, scene.width, scene.height);
   drawSelection(context, scene, layout);
   drawFocus(context, scene, layout);
   for (const unit of [...game.units].sort((left, right) => left.row - right.row)) drawUnit(context, unit, layout, game.time);
   for (const shot of game.shots) drawShot(context, shot, layout);
-  for (const zombie of [...game.zombies].sort((left, right) => left.y - right.y)) drawZombie(context, zombie, layout, game.time);
+  drawZombies(context, game.zombies, layout, game.time);
   for (const effect of game.effects) drawEffect(context, effect, layout);
 }
 
@@ -700,7 +866,7 @@ export function drawZdMenuArt(context: Context, size: number) {
   context.clearRect(0, 0, size, size);
   context.save();
   context.translate(size * 0.66, size * 0.5);
-  drawZombieBody(context, { kind: "walker", biting: false, hp: 1, maxHp: 1, id: 1 }, size * 0.62, 0.2);
+  drawZombieBody(context, "walker", false, true, size * 0.62, 0.24, 0);
   context.restore();
   context.save();
   context.translate(size * 0.3, size * 0.6);
