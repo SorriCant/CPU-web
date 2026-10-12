@@ -61,7 +61,8 @@
         <div class="zd-dock">
           <div v-if="focusInfo && !tip" class="zd-upgrade">
             <span>
-              <b>{{ focusInfo.name }} · {{ focusInfo.level }} 级<i v-if="!focusInfo.graft && focusInfo.kind !== 'fizz'"> · 还能杂交</i></b>
+              <b>{{ focusInfo.name }} · {{ focusInfo.level }} 级<i v-if="focusInfo.canGraft"> · 还能杂交</i></b>
+              <small v-if="focusInfo.genes">{{ focusInfo.genes }}</small>
               <small v-if="focusInfo.perk" class="zd-perk">专属：{{ focusInfo.perk }}</small>
               <small>{{ focusInfo.next ? `升级后：${focusInfo.next.summary}` : focusInfo.kind === "fizz" ? "一次性的，不能升级" : "已经升到头了" }}</small>
             </span>
@@ -217,7 +218,7 @@
             <small v-for="(upgrade, index) in ZD_UPGRADES[kind]" :key="index">{{ index + 2 }} 级（{{ upgrade.cost }} 药力）：{{ upgrade.summary }}</small>
           </p>
           <p>升级：不选药材时，直接点已经种下的药材，再点“升级”（或再点它一次），升级不用等冷却。等级没有封顶：三级以后每升一级，数值和花费都按比例往上涨，花费涨得更快一些。</p>
-          <p>杂交：选一种药材，种到另一种已经种下的药材上，就得到一个新品种——两种药材原来的本事都在，血量更厚，还多一样这个品种独有的效果。杂交要付这种药材的价钱（那株已经升过级的话，再加上升到同一级的升级费），之后两种本事一起升级。每株只能杂交一次，泡腾片本身不能被杂交。</p>
+          <p>杂交：选一种药材，种到另一种已经种下的药材上，就得到一个新品种——两种药材原来的本事都在，血量更厚，还多一样这个品种独有的效果。杂交要付这种药材的价钱（那株已经升过级的话，再加上升到同一级的升级费），之后几种本事一起升级。一株上可以接着再杂交别的药材，种数不限（每种一份），凑得出的每一对组合效果都生效。泡腾片本身不能被杂交。</p>
           <p class="zd-guide zd-hybrids">
             <b>杂交图鉴</b>
             <small v-for="(hybrid, pair) in ZD_HYBRIDS" :key="pair">{{ hybrid.name }}（{{ pairLabel(pair) }}）：{{ hybrid.perk }}</small>
@@ -255,7 +256,9 @@ import {
   zdRemove,
   zdStep,
   zdUnitAt,
+  zdUnitKinds,
   zdUnitName,
+  zdUnitPerks,
   zdUpgrade,
   zdUpgradeBlocker,
   ZD_HYBRIDS,
@@ -272,7 +275,7 @@ type Screen = "menu" | "game" | "ranking" | "achievements" | "history" | "settin
 type GamePhase = "ready" | "playing" | "paused" | "over";
 type Selection = ZdUnitKind | "shovel" | null;
 type HistoryItem = { score: number; waves: number; playedAt: string };
-type FocusInfo = { lane: number; row: number; kind: ZdUnitKind; graft: ZdUnitKind | null; name: string; perk: string | null; level: number; next: ZdUpgrade | null };
+type FocusInfo = { lane: number; row: number; kind: ZdUnitKind; grafts: number; canGraft: boolean; name: string; genes: string | null; perk: string | null; level: number; next: ZdUpgrade | null };
 
 const router = useRouter();
 const auth = useAuthStore();
@@ -460,9 +463,13 @@ function focusUnit(lane: number, row: number) {
       lane,
       row,
       kind: unit.kind,
-      graft: unit.graft,
+      grafts: unit.grafts.length,
+      // 泡腾片不能被杂交；八种都齐了也就没得杂交了。
+      canGraft: unit.kind !== "fizz" && unit.grafts.length < ZD_UNIT_ORDER.length - 1,
       name: zdUnitName(unit),
-      perk: unit.graft ? zdHybridOf(unit.kind, unit.graft)?.perk ?? null : null,
+      // 三种以上没有专门的品种名，把这一格里有哪几种列出来。
+      genes: unit.grafts.length > 1 ? zdUnitKinds(unit).map((kind) => ZD_UNITS[kind].name).join("＋") : null,
+      perk: zdUnitPerks(unit).join("；") || null,
       level: unit.level,
       next: zdNextUpgrade(unit),
     }
@@ -523,8 +530,16 @@ function handleCanvasPointer(event: PointerEvent) {
     else if (zdGraft(game, selected.value, cell.lane, cell.row)) {
       // 杂交成功：报一下新品种的名字和它独有的效果。
       const unit = zdUnitAt(game, cell.lane, cell.row);
-      const hybrid = unit?.graft ? zdHybridOf(unit.kind, unit.graft) : null;
-      if (hybrid) showTip(`杂交出${hybrid.name}：${hybrid.perk}`, 3200);
+      const added = selected.value;
+      if (unit) {
+        // 新凑出来的组合效果：新药材和这一格里原有的每一种各配一对。
+        const gained: string[] = [];
+        for (const kind of zdUnitKinds(unit)) {
+          if (kind === added) continue;
+          for (const part of (zdHybridOf(kind, added)?.perk ?? "").split("；")) if (part && !gained.includes(part)) gained.push(part);
+        }
+        showTip(`杂交出${zdUnitName(unit)}：${gained.join("；")}`, 3200);
+      }
       selected.value = null;
     }
   } else if (selected.value) {
@@ -634,7 +649,7 @@ function syncHud() {
   const focus = focusInfo.value;
   if (focus) {
     const unit = zdUnitAt(game, focus.lane, focus.row);
-    if (!unit || unit.kind !== focus.kind || unit.graft !== focus.graft || unit.level !== focus.level) focusUnit(focus.lane, focus.row);
+    if (!unit || unit.kind !== focus.kind || unit.grafts.length !== focus.grafts || unit.level !== focus.level) focusUnit(focus.lane, focus.row);
   }
   for (const [index, kind] of ZD_UNIT_ORDER.entries()) {
     const mask = maskEls.value[index];

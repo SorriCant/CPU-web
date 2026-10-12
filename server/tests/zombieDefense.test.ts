@@ -26,8 +26,10 @@ import {
   zdRemove,
   zdStep,
   zdUnitAt,
+  zdUnitKinds,
   zdUnitMaxHp,
   zdUnitName,
+  zdUnitPerks,
   zdUnitStats,
   zdUpgrade,
   zdUpgradeBlocker,
@@ -465,7 +467,7 @@ test("杂交：把一种药材种到另一种上，一格里有两种本事，�
   assert.equal(zdGraftBlocker(state, "mint", 0, 6), "这一格没有药材");
   zdPlace(state, "capsule", 0, 6);
   const unit = zdUnitAt(state, 0, 6)!;
-  assert.equal(unit.graft, null);
+  assert.deepEqual(unit.grafts, []);
   assert.equal(zdUnitName(unit), "胶囊射手");
   assert.match(zdGraftBlocker(state, "capsule", 0, 6) || "", /同一种/);
   // 那株是 1 级：只付这种药材的价钱，并占用它的种植冷却。
@@ -477,16 +479,18 @@ test("杂交：把一种药材种到另一种上，一格里有两种本事，�
   assert.equal(zdGraft(state, "mint", 0, 6), true);
   assert.equal(state.energy, 1000 - ZD_UNITS.mint.cost);
   assert.equal(state.cooldowns.mint, ZD_UNITS.mint.cooldown);
-  assert.equal(unit.graft, "mint");
+  assert.deepEqual(unit.grafts, ["mint"]);
   assert.equal(zdUnitName(unit), "双生射手");
   assert.ok(state.events.includes("graft"));
   // 血量：两种里高的，加上低的一半。
   assert.equal(unit.maxHp, zdUnitMaxHp(unit, 1));
   assert.equal(unit.maxHp, Math.round(90 + 90 * ZD_RULES.hybridHpShare));
   assert.equal(unit.hp, unit.maxHp);
-  // 每株只能杂交一次。
+  // 同一种不能再来第二份；别的药材还可以接着杂交。
+  state.cooldowns.mint = 0;
+  assert.match(zdGraftBlocker(state, "mint", 0, 6) || "", /已经有这种药材/);
   state.cooldowns.cabinet = 0;
-  assert.match(zdGraftBlocker(state, "cabinet", 0, 6) || "", /已经杂交过/);
+  assert.equal(zdGraftBlocker(state, "cabinet", 0, 6), null);
 
   // 两种子弹都打出去。
   addZombie(state, "giant", 0, 1);
@@ -520,8 +524,8 @@ test("杂交：把一种药材种到另一种上，一格里有两种本事，�
       assert.ok(hybrid && hybrid.name && hybrid.perk, first + "+" + second);
       assert.equal(zdHybridOf(first, second), hybrid);
       assert.equal(zdHybridOf(second, first), hybrid);
-      assert.equal(zdUnitName({ kind: first, graft: second }), hybrid.name);
-      assert.equal(zdUnitName({ kind: second, graft: first }), hybrid.name);
+      assert.equal(zdUnitName({ kind: first, grafts: [second] }), hybrid.name);
+      assert.equal(zdUnitName({ kind: second, grafts: [first] }), hybrid.name);
       names.add(hybrid.name);
     }
     assert.equal(zdHybridOf(first, first), null);
@@ -680,17 +684,26 @@ test("泡腾片至少炸掉四成血，后期的大僵尸也照样疼", () => {
   assert.equal(boss.hp, boss.maxHp * (1 - ZD_RULES.fizzShare));
 });
 
-test("后期的两种僵尸到了波次才出场，一只占很多预算", () => {
+test("后期的两种僵尸到了波次才出场，一只占很多预算；小僵尸到很后期就不再出场", () => {
   assert.ok(ZD_ZOMBIES.thesis.fromWave > ZD_ZOMBIES.giant.fromWave && ZD_ZOMBIES.mentor.fromWave > ZD_ZOMBIES.thesis.fromWave);
   assert.ok(ZD_ZOMBIES.mentor.cost > ZD_ZOMBIES.thesis.cost && ZD_ZOMBIES.thesis.cost > ZD_ZOMBIES.giant.cost);
   const state = createZdState(5);
   const seen = new Map<string, number>();
-  while (state.wave < 30) {
+  const last = new Map<string, number>();
+  while (state.wave < 60) {
     // 只看刷怪表：把场上清空，免得对局结束。
     state.zombies.length = 0;
     zdStep(state, 0.5);
-    for (const spawn of state.spawns) if (!seen.has(spawn.kind)) seen.set(spawn.kind, spawn.wave);
+    for (const spawn of state.spawns) {
+      if (!seen.has(spawn.kind)) seen.set(spawn.kind, spawn.wave);
+      last.set(spawn.kind, Math.max(last.get(spawn.kind) ?? 0, spawn.wave));
+    }
   }
+  for (const kind of ["walker", "runner", "beaker"] as const) {
+    assert.ok((last.get(kind) ?? 0) <= ZD_ZOMBIES[kind].untilWave!, kind + " " + last.get(kind));
+  }
+  assert.equal(ZD_ZOMBIES.giant.untilWave, undefined);
+  assert.equal(last.get("mentor"), 60);
   assert.ok((seen.get("thesis") ?? 0) >= ZD_ZOMBIES.thesis.fromWave, String(seen.get("thesis")));
   assert.ok((seen.get("mentor") ?? 0) >= ZD_ZOMBIES.mentor.fromWave, String(seen.get("mentor")));
   assert.equal(zdZombiePoints("mentor"), ZD_ZOMBIES.mentor.cost * ZD_RULES.pointsPerBudget);
@@ -730,7 +743,7 @@ test("杂交品种各有专属效果：点燃、寒气、穿甲、炸开", () =>
   const piercing = arena();
   zdPlace(piercing, "capsule", 1, 6);
   zdGraft(piercing, "ampoule", 1, 6);
-  zdUnitAt(piercing, 1, 6)!.second!.timer = 999;
+  zdUnitAt(piercing, 1, 6)!.organs[0]!.timer = 999;
   const first = addZombie(piercing, "giant", 1, 4);
   const second = addZombie(piercing, "giant", 1, 3);
   const third = addZombie(piercing, "giant", 1, 2);
@@ -780,7 +793,7 @@ test("杂交品种各有专属效果：掉药力、挨啃发狠、烧啃它的�
   const bounty = arena();
   zdPlace(bounty, "capsule", 0, 6);
   zdGraft(bounty, "mortar", 0, 6);
-  zdUnitAt(bounty, 0, 6)!.second!.timer = 999;
+  zdUnitAt(bounty, 0, 6)!.organs[0]!.timer = 999;
   const prey = addZombie(bounty, "beaker", 0, 3);
   prey.hp = 5;
   bounty.passiveTimer = 999;
@@ -816,7 +829,7 @@ test("杂交品种各有专属效果：掉药力、挨啃发狠、烧啃它的�
   walls.cooldowns.cabinet = 0;
   zdPlace(walls, "cabinet", 4, 3);
   zdGraft(walls, "mint", 4, 3);
-  zdUnitAt(walls, 4, 3)!.second!.timer = 999;
+  zdUnitAt(walls, 4, 3)!.organs[0]!.timer = 999;
   const scorched = addZombie(walls, "mentor", 0, 3.2);
   const chilled = addZombie(walls, "mentor", 4, 3.2);
   advance(walls, 1);
@@ -893,6 +906,107 @@ test("种满升到三级以后不再补种：杂交过的药圃守得更久，�
   assert.ok(veteran.score <= zdMaxScoreThroughWave(veteran.wave));
   // 后期场上同时有几十上百只僵尸，这是画面要扛住的量。
   assert.ok(hybrid.peak > 40 && veteran.peak > hybrid.peak, `${hybrid.peak} ${veteran.peak}`);
+});
+
+test("杂交不限种数：一格里叠三四种药材，凑得出的每一对组合效果都生效", () => {
+  const state = arena();
+  zdPlace(state, "capsule", 2, 6);
+  for (const kind of ["mint", "burner", "ampoule"] as const) {
+    state.cooldowns[kind] = 0;
+    assert.equal(zdGraftBlocker(state, kind, 2, 6), null, kind);
+    assert.equal(zdGraft(state, kind, 2, 6), true, kind);
+  }
+  const unit = zdUnitAt(state, 2, 6)!;
+  assert.deepEqual(unit.grafts, ["mint", "burner", "ampoule"]);
+  assert.deepEqual(zdUnitKinds(unit), ["capsule", "mint", "burner", "ampoule"]);
+  assert.equal(zdUnitName(unit), "四重杂交");
+  assert.equal(zdUnitName({ kind: "cabinet", grafts: ["mint", "drip"] }), "三重杂交");
+  // 同一种只能有一份。
+  state.cooldowns.mint = 0;
+  assert.match(zdGraftBlocker(state, "mint", 2, 6) || "", /已经有这种药材/);
+  state.cooldowns.capsule = 0;
+  assert.match(zdGraftBlocker(state, "capsule", 2, 6) || "", /已经有这种药材/);
+  // 六对组合里说法不同的效果都列出来。
+  const perks = zdUnitPerks(unit);
+  for (const perk of ["胶囊也带减速", "胶囊被点燃，伤害翻倍", "胶囊打穿一只僵尸，再打下一只", "薄荷被点燃，伤害翻倍", "安瓿让整路僵尸减速", "安瓿被点燃，伤害翻倍"]) {
+    assert.ok(perks.includes(perk), perk);
+  }
+  assert.equal(new Set(perks).size, perks.length);
+  // 血量：最高的那种，加上其余每种的一半。
+  const hps = zdUnitKinds(unit).map((kind) => zdUnitStats(kind, 1).hp).sort((a, b) => b - a);
+  assert.equal(unit.maxHp, Math.round(hps[0] + (hps[1] + hps[2] + hps[3]) * ZD_RULES.hybridHpShare));
+  // 升级：四种一起升，花费相加。
+  const next = zdNextUpgrade(unit)!;
+  assert.equal(next.cost, ZD_UPGRADES.capsule[0].cost + ZD_UPGRADES.mint[0].cost + ZD_UPGRADES.burner[0].cost + ZD_UPGRADES.ampoule[0].cost);
+
+  // 一颗胶囊同时带着三样：点燃翻倍、减速、穿甲；薄荷和安瓿也照样打。
+  const first = addZombie(state, "mentor", 2, 3);
+  const second = addZombie(state, "mentor", 2, 2);
+  for (const zombie of state.zombies) zombie.slow = 0;
+  const kinds = new Set<string>();
+  let capsule: ZdShot | undefined;
+  for (let step = 0; step < 40; step += 1) {
+    zdStep(state, STEP);
+    for (const shot of state.shots) {
+      kinds.add(shot.kind);
+      if (shot.kind === "capsule") capsule ??= { ...shot };
+    }
+  }
+  assert.ok(kinds.has("capsule") && kinds.has("mint"));
+  assert.ok(state.events.includes("beam"));
+  assert.ok(capsule);
+  assert.equal(capsule.tint, "fire");
+  assert.equal(capsule.damage, zdUnitStats("capsule", 1).damage * ZD_RULES.igniteFactor);
+  assert.equal(capsule.slowSeconds, zdUnitStats("mint", 1).slowSeconds);
+  assert.equal(capsule.pierce, 1);
+  assert.ok(first.slow > 0 && second.slow > 0);
+  assert.ok(second.hp < second.maxHp);
+
+  // 泡腾片也能和别的一起叠：被啃掉时炸开，带薄荷的还会冻住。
+  const stack = arena();
+  zdPlace(stack, "cabinet", 1, 3);
+  for (const kind of ["mint", "drip", "fizz"] as const) {
+    stack.cooldowns[kind] = 0;
+    assert.equal(zdGraft(stack, kind, 1, 3), true, kind);
+  }
+  zdUnitAt(stack, 1, 3)!.organs[0]!.timer = 999;
+  const eater = addZombie(stack, "mentor", 1, 3.1);
+  eater.hp = eater.maxHp = 400_000;
+  zdUnitAt(stack, 1, 3)!.hp = 0.5;
+  advance(stack, 0.2);
+  assert.equal(zdUnitAt(stack, 1, 3), null);
+  assert.ok(eater.hp <= eater.maxHp * (1 - ZD_RULES.fizzShare));
+  assert.ok(eater.slow > ZD_RULES.frostBlastSeconds - 1);
+});
+
+test("范围伤害：酒精灯连左右两路一起烧，二级薄荷就开始波及旁边", () => {
+  const fire = arena();
+  zdPlace(fire, "burner", 2, 5);
+  const ahead = addZombie(fire, "mentor", 2, 3.2);
+  const left = addZombie(fire, "mentor", 1, 4);
+  const right = addZombie(fire, "mentor", 3, 4.6);
+  const twoAway = addZombie(fire, "mentor", 0, 4);
+  const tooFar = addZombie(fire, "mentor", 3, 5 - ZD_RULES.burnReach - 0.3);
+  for (const zombie of fire.zombies) zombie.slow = 999;
+  advance(fire, 1);
+  const burn = zdUnitStats("burner", 1).burn;
+  for (const zombie of [ahead, left, right]) assert.ok(Math.abs(zombie.maxHp - zombie.hp - burn) < burn * 0.1, String(zombie.maxHp - zombie.hp));
+  assert.equal(twoAway.hp, twoAway.maxHp);
+  assert.equal(tooFar.hp, tooFar.maxHp);
+
+  assert.deepEqual([1, 2, 3].map((level) => zdUnitStats("mint", level).splash), [0, 0.4, 0.6]);
+  const mint = arena();
+  zdPlace(mint, "mint", 2, 6);
+  zdUpgrade(mint, 2, 6);
+  const target = addZombie(mint, "mentor", 2, 3);
+  const beside = addZombie(mint, "mentor", 3, 3.2);
+  for (const zombie of mint.zombies) zombie.slow = 0;
+  advance(mint, 1.2);
+  assert.ok(target.hp < target.maxHp);
+  assert.equal(beside.maxHp - beside.hp, zdUnitStats("mint", 2).damage * 0.4);
+  assert.ok(beside.slow > 0);
+  // 安瓿炮：每发的伤害和间隔都比单发的胶囊高一截。
+  assert.ok(zdUnitStats("ampoule", 1).damage / ZD_UNITS.ampoule.interval > (zdUnitStats("capsule", 1).damage / ZD_UNITS.capsule.interval) * 3);
 });
 
 test("云端对局接口挂在小游戏自己的路径下，账号注销时一并清理，游戏页受小游戏隐藏规则约束", () => {

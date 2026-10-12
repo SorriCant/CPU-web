@@ -43,9 +43,9 @@ export const ZD_RULES = {
   levelWallHp: 1.45,
   levelCost: 1.6,
   /** 泡腾片至少炸掉僵尸血量上限的这个比例，后期照样管用。 */
-  fizzShare: 0.4,
-  /** 酒精灯够得着的距离（格）。 */
-  burnReach: 1.6,
+  fizzShare: 0.5,
+  /** 酒精灯够得着的距离（格），左右各烧到相邻的一路。 */
+  burnReach: 2.2,
   // 以下是杂交的专属效果。
   /** 杂交了酒精灯：子弹和安瓿被点燃，伤害乘这个数。 */
   igniteFactor: 2,
@@ -82,9 +82,9 @@ export const ZD_UNITS: Record<ZdUnitKind, ZdUnitDefinition> = {
   capsule: { kind: "capsule", name: "胶囊射手", summary: "向前发射胶囊", cost: 100, hp: 90, cooldown: 5, ready: 1, interval: 1.2, damage: 20 },
   mint: { kind: "mint", name: "薄荷射手", summary: "命中后让僵尸减速", cost: 150, hp: 90, cooldown: 7, ready: 1, interval: 1.5, damage: 15 },
   cabinet: { kind: "cabinet", name: "药柜", summary: "结实，用来挡路", cost: 50, hp: 700, cooldown: 14, ready: 1, interval: 0, damage: 0 },
-  fizz: { kind: "fizz", name: "泡腾片", summary: "片刻后炸开周围一圈，至少炸掉四成血", cost: 125, hp: 300, cooldown: 22, ready: 0.5, interval: 0.8, damage: 900 },
-  ampoule: { kind: "ampoule", name: "安瓿炮", summary: "一发打穿整路，路上的僵尸全中", cost: 250, hp: 110, cooldown: 9, ready: 1, interval: 3, damage: 90 },
-  burner: { kind: "burner", name: "酒精灯", summary: "一直烧前方一格半以内的所有僵尸", cost: 175, hp: 130, cooldown: 7, ready: 1, interval: 0, damage: 32 },
+  fizz: { kind: "fizz", name: "泡腾片", summary: "片刻后炸开周围一圈，至少炸掉一半血", cost: 125, hp: 300, cooldown: 22, ready: 0.5, interval: 0.8, damage: 1200 },
+  ampoule: { kind: "ampoule", name: "安瓿炮", summary: "一发打穿整路，路上的僵尸全中", cost: 250, hp: 130, cooldown: 9, ready: 1, interval: 2.5, damage: 140 },
+  burner: { kind: "burner", name: "酒精灯", summary: "一直烧前方两格、左右三路以内的所有僵尸", cost: 175, hp: 220, cooldown: 7, ready: 1, interval: 0, damage: 60 },
   drip: { kind: "drip", name: "输液架", summary: "给周围一圈药材慢慢回血", cost: 125, hp: 110, cooldown: 9, ready: 1, interval: 0, damage: 22 },
 };
 
@@ -106,21 +106,21 @@ export interface ZdUpgrade {
 export const ZD_UPGRADES: Record<ZdUnitKind, readonly ZdUpgrade[]> = {
   mortar: [{ cost: 50, summary: "每次磨出 50 药力" }, { cost: 100, summary: "每次磨出 85 药力" }],
   capsule: [{ cost: 75, summary: "两连发，胶囊更重" }, { cost: 125, summary: "三连发，胶囊再加重" }],
-  mint: [{ cost: 100, summary: "伤害更高，减速更久" }, { cost: 150, summary: "命中时连旁边的僵尸一起打、一起减速" }],
+  mint: [{ cost: 100, summary: "伤害更高，减速更久，命中时连旁边的僵尸一起打、一起减速" }, { cost: 150, summary: "伤害再高，旁边的僵尸挨得更重" }],
   cabinet: [{ cost: 50, summary: "加厚一倍，升级时顺便修好" }, { cost: 100, summary: "再加厚，啃它的僵尸会受伤" }],
   fizz: [],
-  ampoule: [{ cost: 150, summary: "每发伤害提高到 130" }, { cost: 250, summary: "每发伤害提高到 185" }],
-  burner: [{ cost: 100, summary: "每秒烧掉 48 血" }, { cost: 175, summary: "每秒烧掉 70 血" }],
+  ampoule: [{ cost: 150, summary: "每发伤害提高到 200" }, { cost: 250, summary: "每发伤害提高到 290" }],
+  burner: [{ cost: 100, summary: "每秒烧掉 85 血" }, { cost: 175, summary: "每秒烧掉 120 血" }],
   drip: [{ cost: 75, summary: "每秒回 34 血" }, { cost: 125, summary: "每秒回 50 血" }],
 };
 
 export interface ZdHybrid {
   name: string;
-  /** 这种组合独有的效果；两种药材原有的本事另外都保留。 */
+  /** 这种组合独有的效果；两种药材原有的本事另外都保留。一格里杂交了三种以上时，凑得出的每一对都生效。 */
   perk: string;
 }
 
-/** 二十八种杂交。键是按药材栏顺序排好的一对，种的先后不影响结果。 */
+/** 二十八种两两组合。键是按药材栏顺序排好的一对，种的先后不影响结果。 */
 export const ZD_HYBRIDS: Record<string, ZdHybrid> = {
   "mortar+capsule": { name: "研钵射手", perk: "它击退的僵尸额外掉药力" },
   "mortar+mint": { name: "薄荷研钵", perk: "它击退的僵尸额外掉药力" },
@@ -160,8 +160,8 @@ export interface ZdUnitStats {
   /** 研钵每次磨出的药力。 */
   energy: number;
   slowSeconds: number;
-  /** 命中时波及相邻僵尸。 */
-  splash: boolean;
+  /** 命中时波及相邻僵尸，按这个比例算伤害；0 表示不波及。 */
+  splash: number;
   /** 每秒反伤啃咬者。 */
   thorns: number;
   /** 酒精灯每秒烧掉的血。 */
@@ -173,7 +173,7 @@ export interface ZdUnitStats {
 function buildStats(kind: ZdUnitKind, level: number): ZdUnitStats {
   const tier = Math.min(ZD_TABLE_LEVEL, Math.max(1, level)) - 1;
   const base = ZD_UNITS[kind];
-  const stats: ZdUnitStats = { hp: base.hp, damage: base.damage, shots: 1, energy: 0, slowSeconds: 0, splash: false, thorns: 0, burn: 0, heal: 0 };
+  const stats: ZdUnitStats = { hp: base.hp, damage: base.damage, shots: 1, energy: 0, slowSeconds: 0, splash: 0, thorns: 0, burn: 0, heal: 0 };
   if (kind === "mortar") {
     stats.energy = [ZD_RULES.passiveEnergy, 50, 85][tier];
     stats.hp = [base.hp, 100, 130][tier];
@@ -184,18 +184,18 @@ function buildStats(kind: ZdUnitKind, level: number): ZdUnitStats {
   } else if (kind === "mint") {
     stats.damage = [base.damage, 25, 35][tier];
     stats.slowSeconds = [ZD_RULES.slowSeconds, 5, 5][tier];
-    stats.splash = tier === 2;
+    stats.splash = [0, 0.4, 0.6][tier];
     stats.hp = [base.hp, 120, 150][tier];
   } else if (kind === "cabinet") {
     stats.hp = [base.hp, 1400, 2400][tier];
     stats.thorns = tier === 2 ? 30 : 0;
   } else if (kind === "ampoule") {
-    stats.damage = [base.damage, 130, 185][tier];
-    stats.hp = [base.hp, 140, 170][tier];
+    stats.damage = [base.damage, 200, 290][tier];
+    stats.hp = [base.hp, 160, 190][tier];
   } else if (kind === "burner") {
     stats.damage = 0;
-    stats.burn = [base.damage, 48, 70][tier];
-    stats.hp = [base.hp, 170, 210][tier];
+    stats.burn = [base.damage, 85, 120][tier];
+    stats.hp = [base.hp, 280, 340][tier];
   } else if (kind === "drip") {
     stats.damage = 0;
     stats.heal = [base.damage, 34, 50][tier];
@@ -258,13 +258,15 @@ export interface ZdZombieDefinition {
   /** 占用的波次预算；击退得分 = cost * pointsPerBudget。 */
   cost: number;
   fromWave: number;
+  /** 过了这一波就不再出场：很后期只剩大个的，场上不至于挤上几百只。不写表示一直出。 */
+  untilWave?: number;
   weight: number;
 }
 
 export const ZD_ZOMBIES: Record<ZdZombieKind, ZdZombieDefinition> = {
-  walker: { kind: "walker", name: "挂科僵尸", hp: 190, speed: 0.2, bite: 35, cost: 1, fromWave: 1, weight: 5 },
-  runner: { kind: "runner", name: "早八僵尸", hp: 150, speed: 0.44, bite: 35, cost: 1.5, fromWave: 3, weight: 2 },
-  beaker: { kind: "beaker", name: "烧杯僵尸", hp: 520, speed: 0.2, bite: 35, cost: 2.5, fromWave: 4, weight: 2 },
+  walker: { kind: "walker", name: "挂科僵尸", hp: 190, speed: 0.2, bite: 35, cost: 1, fromWave: 1, untilWave: 34, weight: 5 },
+  runner: { kind: "runner", name: "早八僵尸", hp: 150, speed: 0.44, bite: 35, cost: 1.5, fromWave: 3, untilWave: 44, weight: 2 },
+  beaker: { kind: "beaker", name: "烧杯僵尸", hp: 520, speed: 0.2, bite: 35, cost: 2.5, fromWave: 4, untilWave: 54, weight: 2 },
   giant: { kind: "giant", name: "延毕巨尸", hp: 1500, speed: 0.15, bite: 90, cost: 6, fromWave: 8, weight: 1 },
   // 后期才出场的两种：一只顶很多只，场上不至于挤成一片。
   thesis: { kind: "thesis", name: "论文僵尸", hp: 4200, speed: 0.17, bite: 140, cost: 14, fromWave: 14, weight: 1.2 },
@@ -281,10 +283,10 @@ export interface ZdOrgan {
 export interface ZdUnit extends ZdOrgan {
   id: number;
   kind: ZdUnitKind;
-  /** 杂交进来的另一种药材；没有杂交过为 null。 */
-  graft: ZdUnitKind | null;
-  /** 杂交进来的那一半的计时；它不需要计时（药柜、泡腾片、酒精灯、输液架）或没有杂交时为 null。 */
-  second: ZdOrgan | null;
+  /** 杂交进来的药材，按杂交的先后排。数量不限，每种只能有一份。 */
+  grafts: ZdUnitKind[];
+  /** 和 grafts 一一对应的计时；不需要计时的（药柜、泡腾片、酒精灯、输液架）为 null。 */
+  organs: Array<ZdOrgan | null>;
   lane: number;
   row: number;
   /** 从 1 级起，不设上限。 */
@@ -448,10 +450,15 @@ export function zdUnitAt(state: ZdState, lane: number, row: number) {
   return state.units.find((unit) => unit.lane === lane && unit.row === row) ?? null;
 }
 
-type Genes = Pick<ZdUnit, "kind" | "graft">;
+type Genes = Pick<ZdUnit, "kind"> & { grafts: readonly ZdUnitKind[] };
 
 function hasGene(unit: Genes, kind: ZdUnitKind) {
-  return unit.kind === kind || unit.graft === kind;
+  return unit.kind === kind || unit.grafts.includes(kind);
+}
+
+/** 这一格里的所有药材：原来那株在前，杂交进来的按先后排。 */
+export function zdUnitKinds(unit: Genes): ZdUnitKind[] {
+  return [unit.kind, ...unit.grafts];
 }
 
 /** 两种药材杂交出来的是什么；同一种药材不能杂交，返回 null。 */
@@ -460,17 +467,35 @@ export function zdHybridOf(first: ZdUnitKind, second: ZdUnitKind): ZdHybrid | nu
   return ZD_HYBRIDS[pair.join("+")] ?? null;
 }
 
-/** 这株药材的名字；杂交过的用杂交品种的名字。 */
+const MULTIPLES = ["", "", "", "三", "四", "五", "六", "七", "八"];
+
+/** 这株药材的名字。两种杂交用品种名；三种以上叫“三重杂交”“四重杂交”…… */
 export function zdUnitName(unit: Genes) {
-  return (unit.graft ? zdHybridOf(unit.kind, unit.graft)?.name : null) ?? ZD_UNITS[unit.kind].name;
+  if (!unit.grafts.length) return ZD_UNITS[unit.kind].name;
+  if (unit.grafts.length === 1) return zdHybridOf(unit.kind, unit.grafts[0])?.name ?? ZD_UNITS[unit.kind].name;
+  return (MULTIPLES[unit.grafts.length + 1] ?? "多") + "重杂交";
 }
 
-/** 这株药材在某一级的血量上限。杂交药材取两种里高的，再加上低的一部分。 */
+/** 这株药材身上生效的组合效果：凑得出的每一对各算一条，说法相同的只留一条。 */
+export function zdUnitPerks(unit: Genes): string[] {
+  const kinds = zdUnitKinds(unit);
+  const perks: string[] = [];
+  for (let first = 0; first < kinds.length; first += 1) {
+    for (let second = first + 1; second < kinds.length; second += 1) {
+      const perk = zdHybridOf(kinds[first], kinds[second])?.perk;
+      if (!perk) continue;
+      for (const part of perk.split("；")) if (!perks.includes(part)) perks.push(part);
+    }
+  }
+  return perks;
+}
+
+/** 这株药材在某一级的血量上限。杂交药材取几种里最高的，再加上其余每种的一部分。 */
 export function zdUnitMaxHp(unit: Genes, level: number) {
-  const own = zdUnitStats(unit.kind, level).hp;
-  if (!unit.graft) return own;
-  const other = zdUnitStats(unit.graft, level).hp;
-  return Math.round(Math.max(own, other) + Math.min(own, other) * ZD_RULES.hybridHpShare);
+  const all = zdUnitKinds(unit).map((kind) => zdUnitStats(kind, level).hp).sort((left, right) => right - left);
+  let total = all[0];
+  for (const other of all.slice(1)) total += other * ZD_RULES.hybridHpShare;
+  return Math.round(total);
 }
 
 /** 这种本事要不要自己的计时。药柜、酒精灯、输液架一直生效，不用。 */
@@ -502,8 +527,8 @@ export function zdPlace(state: ZdState, kind: ZdUnitKind, lane: number, row: num
   state.units.push({
     id: state.nextId++,
     kind,
-    graft: null,
-    second: null,
+    grafts: [],
+    organs: [],
     lane,
     row,
     level: 1,
@@ -533,22 +558,22 @@ export function zdGraftBlocker(state: ZdState, kind: ZdUnitKind, lane: number, r
   const unit = zdUnitAt(state, lane, row);
   if (!unit) return "这一格没有药材";
   if (unit.kind === "fizz") return "泡腾片马上就炸，不能杂交";
-  if (unit.graft) return "这株已经杂交过了";
-  if (unit.kind === kind) return "同一种药材不能杂交，点它可以升级";
+  if (unit.kind === kind && !unit.grafts.length) return "同一种药材不能杂交，点它可以升级";
+  if (hasGene(unit, kind)) return "这株里已经有这种药材了";
   if (state.cooldowns[kind] > 0) return "还在冷却";
   const cost = zdGraftCost(kind, unit.level);
   if (state.energy < cost) return `药力不够，杂交要 ${cost}`;
   return null;
 }
 
-/** 把选中的药材种到另一种药材上：两种本事都在，再多一样这个组合独有的效果。 */
+/** 把选中的药材种到另一株药材上：原有的本事都在，凑出来的每一对组合再各多一样独有的效果。种数不限。 */
 export function zdGraft(state: ZdState, kind: ZdUnitKind, lane: number, row: number) {
   if (zdGraftBlocker(state, kind, lane, row)) return false;
   const unit = zdUnitAt(state, lane, row)!;
   state.energy -= zdGraftCost(kind, unit.level);
   state.cooldowns[kind] = ZD_UNITS[kind].cooldown;
-  unit.graft = kind;
-  unit.second = needsOrgan(kind) ? freshOrgan(kind) : null;
+  unit.grafts.push(kind);
+  unit.organs.push(needsOrgan(kind) ? freshOrgan(kind) : null);
   const maxHp = zdUnitMaxHp(unit, unit.level);
   unit.hp += maxHp - unit.maxHp;
   unit.maxHp = maxHp;
@@ -558,12 +583,15 @@ export function zdGraft(state: ZdState, kind: ZdUnitKind, lane: number, row: num
   return true;
 }
 
-/** 这株药材的下一级；不能升级时返回 null。杂交药材两种本事一起升，花费相加。 */
-export function zdNextUpgrade(unit: Pick<ZdUnit, "kind" | "level"> & { graft?: ZdUnitKind | null }): ZdUpgrade | null {
-  const own = zdUpgradeFor(unit.kind, unit.level);
-  const other = unit.graft ? zdUpgradeFor(unit.graft, unit.level) : null;
-  if (!own || !other) return own ?? other;
-  return { cost: own.cost + other.cost, summary: `${own.summary}；${other.summary}` };
+/** 这株药材的下一级；不能升级时返回 null。杂交药材几种本事一起升，花费相加。 */
+export function zdNextUpgrade(unit: Pick<ZdUnit, "kind" | "level"> & { grafts?: readonly ZdUnitKind[] }): ZdUpgrade | null {
+  const parts = [unit.kind, ...(unit.grafts ?? [])]
+    .map((kind) => zdUpgradeFor(kind, unit.level))
+    .filter((upgrade): upgrade is ZdUpgrade => Boolean(upgrade));
+  if (!parts.length) return null;
+  if (parts.length === 1) return parts[0];
+  const cost = parts.reduce((total, upgrade) => total + upgrade.cost, 0);
+  return { cost, summary: parts.length === 2 ? parts[0].summary + "；" + parts[1].summary : parts.length + " 种本事一起升一级" };
 }
 
 /** 不能升级时返回原因；可以升级返回 null。 */
@@ -606,9 +634,11 @@ function startWave(state: ZdState) {
   const big = wave % ZD_RULES.bigWaveEvery === 0;
   state.events.push(big ? "bigWave" : "wave");
   let remaining = zdWaveBudget(wave);
-  const kinds = (Object.values(ZD_ZOMBIES) as ZdZombieDefinition[]).filter((zombie) => zombie.fromWave <= wave);
+  const kinds = (Object.values(ZD_ZOMBIES) as ZdZombieDefinition[]).filter((zombie) => zombie.fromWave <= wave && wave <= (zombie.untilWave ?? Number.POSITIVE_INFINITY));
   while (remaining >= 1) {
     const affordable = kinds.filter((zombie) => zombie.cost <= remaining);
+    // 很后期最便宜的僵尸也要好几点预算，剩下的零头不够买就不买了。
+    if (!affordable.length) break;
     let pick = nextRandom(state) * affordable.reduce((total, zombie) => total + zombie.weight, 0);
     let chosen = affordable[0];
     for (const zombie of affordable) {
@@ -658,7 +688,7 @@ function damageZombie(zombie: ZdZombie, amount: number, bounty = false) {
 }
 
 /**
- * 泡腾片炸开：相邻三路、上下一格半以内的僵尸都挨一下，至少炸掉四成血。
+ * 泡腾片炸开：相邻三路、上下一格半以内的僵尸都挨一下，至少炸掉一半血。
  * frost 把炸到的僵尸冻住（减速）若干秒。
  */
 function explode(state: ZdState, lane: number, y: number, frost = 0) {
@@ -698,7 +728,7 @@ function fire(state: ZdState, unit: ZdUnit, kind: ZdUnitKind, stats: ZdUnitStats
     y: unit.row + 0.2,
     damage: stats.damage * (ignited ? ZD_RULES.igniteFactor : 1),
     slowSeconds: chilled ? zdUnitStats("mint", unit.level).slowSeconds : stats.slowSeconds,
-    splash: bomb ? 1 : stats.splash ? 0.4 : 0,
+    splash: bomb ? 1 : stats.splash,
     pierce: kind === "capsule" && hasGene(unit, "ampoule") ? 1 : 0,
     lastHit: 0,
     bounty: hasGene(unit, "mortar"),
@@ -772,21 +802,26 @@ function stepUnits(state: ZdState, delta: number, lanes: ZdZombie[][], grid: Arr
   const { rows } = ZD_RULES;
   for (const unit of state.units) {
     // 杂交了药柜：挨啃的时候攻击和产出都加快。
-    const pace = unit.graft && unit.hurt > 0 && hasGene(unit, "cabinet") ? delta * ZD_RULES.enrageFactor : delta;
+    const pace = unit.grafts.length && unit.hurt > 0 && hasGene(unit, "cabinet") ? delta * ZD_RULES.enrageFactor : delta;
     unit.pulse = Math.max(0, unit.pulse - delta);
     unit.hurt = Math.max(0, unit.hurt - delta);
     runOrgan(state, unit, unit.kind, unit, pace, nearest, lanes);
-    if (unit.graft && unit.second) runOrgan(state, unit, unit.graft, unit.second, pace, nearest, lanes);
+    for (let index = 0; index < unit.grafts.length; index += 1) {
+      const organ = unit.organs[index];
+      if (organ) runOrgan(state, unit, unit.grafts[index], organ, pace, nearest, lanes);
+    }
     if (hasGene(unit, "burner")) {
-      // 酒精灯：前方一格半以内的僵尸一起烧。
+      // 酒精灯：前方两格多、连同左右相邻两路的僵尸一起烧。
       const burn = zdUnitStats("burner", unit.level).burn * delta;
       const bounty = hasGene(unit, "mortar");
       let burning = false;
-      for (const zombie of lanes[unit.lane]) {
-        if (zombie.hp <= 0 || zombie.y <= -0.4 || zombie.y >= unit.row + 0.5 || zombie.y < unit.row - ZD_RULES.burnReach) continue;
-        zombie.hp -= burn;
-        if (bounty && zombie.hp <= 0) zombie.loot = true;
-        burning = true;
+      for (let lane = Math.max(0, unit.lane - 1); lane <= Math.min(ZD_RULES.lanes - 1, unit.lane + 1); lane += 1) {
+        for (const zombie of lanes[lane]) {
+          if (zombie.hp <= 0 || zombie.y <= -0.4 || zombie.y >= unit.row + 0.5 || zombie.y < unit.row - ZD_RULES.burnReach) continue;
+          zombie.hp -= burn;
+          if (bounty && zombie.hp <= 0) zombie.loot = true;
+          burning = true;
+        }
       }
       if (burning) unit.pulse = Math.max(unit.pulse, 0.15);
     }
@@ -799,7 +834,7 @@ function stepUnits(state: ZdState, delta: number, lanes: ZdZombie[][], grid: Arr
           if (other && other !== unit && other.hp > 0 && other.hp < other.maxHp) other.hp = Math.min(other.maxHp, other.hp + heal);
         }
       }
-      if (unit.graft && unit.hp > 0 && unit.hp < unit.maxHp) {
+      if (unit.grafts.length && unit.hp > 0 && unit.hp < unit.maxHp) {
         unit.hp = Math.min(unit.maxHp, unit.hp + heal * (hasGene(unit, "cabinet") ? ZD_RULES.wallRegenFactor : 1));
       }
     }
@@ -884,9 +919,9 @@ function sweep(state: ZdState) {
     if (unit.hp > 0) continue;
     lostUnit = true;
     // 杂交了泡腾片的药材被啃掉时炸开。自己就是泡腾片的已经在引爆时炸过了。
-    if (unit.graft !== "fizz") continue;
-    explode(state, unit.lane, unit.row + 0.5, unit.kind === "mint" ? ZD_RULES.frostBlastSeconds : 0);
-    if (unit.kind === "drip") {
+    if (!unit.grafts.includes("fizz")) continue;
+    explode(state, unit.lane, unit.row + 0.5, hasGene(unit, "mint") ? ZD_RULES.frostBlastSeconds : 0);
+    if (hasGene(unit, "drip")) {
       // 急救泡腾：把周围一圈药材回满血。
       for (const other of state.units) {
         if (other.hp > 0 && Math.abs(other.lane - unit.lane) <= 1 && Math.abs(other.row - unit.row) <= 1) other.hp = other.maxHp;

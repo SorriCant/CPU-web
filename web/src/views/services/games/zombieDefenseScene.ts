@@ -185,8 +185,8 @@ function drawSelection(context: Context, scene: ZdSceneState, layout: ZdLayout) 
   for (let lane = 0; lane < ZD_RULES.lanes; lane += 1) {
     for (let row = 0; row < ZD_RULES.rows; row += 1) {
       const unit = occupied.get(lane * 100 + row);
-      // 选了药材时，另一种还没杂交过的药材也能点：种上去就是杂交。
-      const graft = !shovel && unit && unit.kind !== "fizz" && !unit.graft && unit.kind !== scene.selected;
+      // 选了药材时，还没有这种药材的那些格子也能点：种上去就是杂交。
+      const graft = !shovel && unit && unit.kind !== "fizz" && unit.kind !== scene.selected && !unit.grafts.includes(scene.selected as ZdUnitKind);
       if (shovel ? !unit : Boolean(unit) && !graft) continue;
       const x = layout.left + lane * layout.cellWidth;
       const y = layout.top + row * layout.cellHeight;
@@ -608,31 +608,35 @@ function drawUnit(context: Context, unit: ZdUnit, layout: ZdLayout, time: number
     context.translate(x, y);
     drawUnitShape(context, unit.kind, size, unit, time);
     context.restore();
-  } else if (!unit.graft) {
+  } else if (!unit.grafts.length) {
     stamp(context, unitSprite(unit.kind, unit.level, unit.pulse, ratio, time, size), x, y, size * 1.3, size * 1.3);
   } else {
-    // 杂交药材：原来那株退到左后方，杂交进来的那株小一号站在右前方。
-    const main = size * 0.84;
-    const side = size * 0.6;
-    stamp(context, unitSprite(unit.kind, unit.level, unit.pulse, ratio, time, main), x - size * 0.1, y - size * 0.06, main * 1.3, main * 1.3);
-    stamp(context, unitSprite(unit.graft, unit.level, unit.pulse, ratio, time, side), x + size * 0.21, y + size * 0.17, side * 1.3, side * 1.3);
+    // 杂交药材：原来那株退到后面，杂交进来的几株小一号，在前面从右往左排开；越多越小。
+    const count = unit.grafts.length;
+    const main = size * (count === 1 ? 0.84 : 0.78);
+    const side = size * (count === 1 ? 0.6 : count === 2 ? 0.5 : count <= 4 ? 0.42 : 0.34);
+    stamp(context, unitSprite(unit.kind, unit.level, unit.pulse, ratio, time, main), x - (count === 1 ? size * 0.1 : 0), y - size * (count === 1 ? 0.06 : 0.12), main * 1.3, main * 1.3);
+    for (let index = 0; index < count; index += 1) {
+      const offset = count === 1 ? 0.21 : 0.3 - (index * 0.6) / (count - 1);
+      stamp(context, unitSprite(unit.grafts[index], unit.level, unit.pulse, ratio, time, side), x + size * offset, y + size * 0.19, side * 1.3, side * 1.3);
+    }
   }
   context.globalAlpha = 1;
   if (unit.kind !== "fizz") healthBar(context, x, y + size * 0.44, size * 0.56, ratio, "#7fe08a");
-  // 酒精灯烧着的时候，前方一格半罩着一片火光。
-  if (unit.pulse > 0 && (unit.kind === "burner" || unit.graft === "burner")) {
-    const width = layout.cellWidth * 0.78;
+  // 酒精灯烧着的时候，前方两格多、左右三路罩着一片火光。
+  if (unit.pulse > 0 && (unit.kind === "burner" || unit.grafts.includes("burner"))) {
+    const width = layout.cellWidth * 2.7;
     const height = layout.cellHeight * ZD_RULES.burnReach;
     const cone = sprite("flame", width, height, (target) => {
       const glow = target.createLinearGradient(0, -height / 2, 0, height / 2);
       glow.addColorStop(0, "rgba(255, 150, 60, 0)");
-      glow.addColorStop(0.55, "rgba(255, 150, 60, .3)");
-      glow.addColorStop(1, "rgba(255, 220, 130, .55)");
+      glow.addColorStop(0.55, "rgba(255, 150, 60, .14)");
+      glow.addColorStop(1, "rgba(255, 220, 130, .36)");
       target.beginPath();
       target.moveTo(-width * 0.5, -height / 2);
       target.lineTo(width * 0.5, -height / 2);
-      target.lineTo(width * 0.22, height / 2);
-      target.lineTo(-width * 0.22, height / 2);
+      target.lineTo(width * 0.1, height / 2);
+      target.lineTo(-width * 0.1, height / 2);
       target.closePath();
       target.fillStyle = glow;
       target.fill();
