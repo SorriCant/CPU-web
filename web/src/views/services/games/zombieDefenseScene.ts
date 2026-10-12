@@ -43,7 +43,7 @@ export interface ZdSceneState {
 }
 
 const TOP_RESERVE = 100;
-const BOTTOM_RESERVE = 172;
+const BOTTOM_RESERVE = 226;
 const CREAM = "#fff3df";
 const RED = "#ef5a44";
 const MINT = "#63d9bb";
@@ -443,6 +443,96 @@ function drawFizz(context: Context, size: number, timer: number, time: number) {
   }
 }
 
+/** 安瓿炮：细颈朝上的玻璃安瓿，琥珀色药液。颈上的色环几级几道（最多三道）。 */
+function drawAmpoule(context: Context, size: number, pulse: number, level: number) {
+  const firing = pulse > 0;
+  leaves(context, size, "#5fbf78");
+  context.translate(0, firing ? size * 0.04 : 0);
+  context.beginPath();
+  context.moveTo(-size * 0.05, -size * 0.5);
+  context.lineTo(size * 0.05, -size * 0.5);
+  context.lineTo(size * 0.06, -size * 0.3);
+  context.bezierCurveTo(size * 0.24, -size * 0.24, size * 0.24, -size * 0.1, size * 0.22, 0);
+  context.lineTo(size * 0.22, size * 0.26);
+  context.quadraticCurveTo(size * 0.22, size * 0.36, size * 0.12, size * 0.36);
+  context.lineTo(-size * 0.12, size * 0.36);
+  context.quadraticCurveTo(-size * 0.22, size * 0.36, -size * 0.22, size * 0.26);
+  context.lineTo(-size * 0.22, 0);
+  context.bezierCurveTo(-size * 0.24, -size * 0.1, -size * 0.24, -size * 0.24, -size * 0.06, -size * 0.3);
+  context.closePath();
+  paint(context, horizontal(context, -size * 0.22, size * 0.22, [[0, "#fff6dc"], [0.5, "#f3c463"], [1, "#c98a2b"]]), "rgba(120, 78, 20, .6)", 1.5);
+  for (let ring = 0; ring < level; ring += 1) {
+    context.fillStyle = level >= 2 ? GOLD : "#8a5a1e";
+    context.fillRect(-size * 0.056, -size * (0.36 + ring * 0.045), size * 0.112, size * 0.024);
+  }
+  gloss(context, -size * 0.11, -size * 0.02, size * 0.03, size * 0.13, 0.08, 0.6);
+  face(context, 0, size * 0.14, size);
+  if (firing) {
+    ellipsePath(context, 0, -size * 0.54, size * 0.1, size * 0.07);
+    context.fillStyle = "rgba(255, 226, 150, .9)";
+    context.fill();
+  }
+}
+
+/** 酒精灯：扁圆的玻璃壶，铜灯口，烧起来火苗蹿高。 */
+function drawBurner(context: Context, size: number, pulse: number, level: number) {
+  const lit = pulse > 0;
+  ellipsePath(context, 0, size * 0.16, size * 0.32, size * 0.22);
+  paint(context, horizontal(context, -size * 0.32, size * 0.32, [[0, "#e8f6ff"], [0.55, "#8fc7ee"], [1, "#4f8fc4"]]), "rgba(40, 80, 120, .6)", 1.5);
+  gloss(context, -size * 0.16, size * 0.06, size * 0.04, size * 0.08, 0.3, 0.6);
+  roundedPath(context, -size * 0.11, -size * 0.14, size * 0.22, size * 0.12, size * 0.03);
+  paint(context, horizontal(context, -size * 0.11, size * 0.11, [[0, lighten(GOLD, 0.2)], [1, darken(GOLD, 0.3)]]), darken(GOLD, 0.5), 1.2);
+  const base = -size * 0.14;
+  const flame = size * (lit ? 0.36 : 0.2) * (1 + (level - 1) * 0.07);
+  context.beginPath();
+  context.moveTo(0, base - flame);
+  context.bezierCurveTo(flame * 0.6, base - flame * 0.45, flame * 0.42, base, 0, base);
+  context.bezierCurveTo(-flame * 0.42, base, -flame * 0.6, base - flame * 0.45, 0, base - flame);
+  context.closePath();
+  paint(context, vertical(context, base - flame, base, "#fff2a8", "#ff7a2f"), "rgba(200, 80, 20, .6)", 1.2);
+  ellipsePath(context, 0, base - flame * 0.24, flame * 0.14, flame * 0.2);
+  context.fillStyle = "rgba(255, 255, 255, .75)";
+  context.fill();
+  face(context, 0, size * 0.18, size);
+}
+
+/** 输液架：一袋绿色药液挂在架子上，往下滴。 */
+function drawDrip(context: Context, size: number, level: number) {
+  // 底座、立杆和横臂
+  ellipsePath(context, size * 0.2, size * 0.37, size * 0.17, size * 0.045);
+  paint(context, "#aab3bf", "#5d6673", 1.2);
+  roundedPath(context, size * 0.18, -size * 0.46, size * 0.045, size * 0.83, size * 0.02);
+  paint(context, horizontal(context, size * 0.18, size * 0.225, [[0, "#e3e8ee"], [1, "#8d97a5"]]), "#6f7986", 1);
+  roundedPath(context, -size * 0.06, -size * 0.47, size * 0.3, size * 0.04, size * 0.02);
+  paint(context, "#c9d1db", "#6f7986", 1);
+  // 药液袋
+  context.beginPath();
+  context.moveTo(0, -size * 0.44);
+  context.lineTo(0, -size * 0.36);
+  context.lineWidth = 1.6;
+  context.strokeStyle = "#6f7986";
+  context.stroke();
+  roundedPath(context, -size * 0.26, -size * 0.36, size * 0.4, size * 0.5, size * 0.1);
+  paint(context, vertical(context, -size * 0.36, size * 0.14, "#f1fff5", "#7fd89d"), "rgba(40, 110, 70, .6)", 1.5);
+  gloss(context, -size * 0.17, -size * 0.16, size * 0.03, size * 0.1, 0.1, 0.6);
+  // 袋上的绿十字，升级后变金色
+  context.fillStyle = level >= 2 ? GOLD : "#2f9d5c";
+  context.fillRect(-size * 0.085, -size * 0.31, size * 0.05, size * 0.13);
+  context.fillRect(-size * 0.125, -size * 0.27, size * 0.13, size * 0.05);
+  face(context, -size * 0.06, -size * 0.04, size * 0.9);
+  // 滴管和药滴
+  context.beginPath();
+  context.moveTo(-size * 0.06, size * 0.14);
+  context.lineTo(-size * 0.06, size * 0.24);
+  context.lineWidth = 1.8;
+  context.strokeStyle = "rgba(90, 190, 130, .95)";
+  context.stroke();
+  for (let drop = 0; drop < Math.min(3, level); drop += 1) {
+    ellipsePath(context, -size * 0.06, size * (0.28 + drop * 0.05), size * 0.026, size * 0.034);
+    paint(context, "#9ff0bd", "rgba(40, 110, 70, .6)", 1);
+  }
+}
+
 function drawUnitShape(context: Context, kind: ZdUnitKind, size: number, unit: Pick<ZdUnit, "pulse" | "timer" | "hp" | "maxHp" | "level">, time: number) {
   context.lineJoin = "round";
   context.lineCap = "round";
@@ -450,6 +540,9 @@ function drawUnitShape(context: Context, kind: ZdUnitKind, size: number, unit: P
   else if (kind === "cabinet") drawCabinet(context, size, unit.hp / unit.maxHp, unit.level);
   else if (kind === "fizz") drawFizz(context, size, unit.timer, time);
   else if (kind === "mint") drawMintShooter(context, size, unit.pulse, unit.level);
+  else if (kind === "ampoule") drawAmpoule(context, size, unit.pulse, unit.level);
+  else if (kind === "burner") drawBurner(context, size, unit.pulse, unit.level);
+  else if (kind === "drip") drawDrip(context, size, unit.level);
   else drawCapsuleShooter(context, size, unit.pulse, unit.level);
 }
 
@@ -495,8 +588,10 @@ function unitSprite(kind: ZdUnitKind, level: number, pulse: number, ratio: numbe
     state = "1";
   }
   const box = size * 1.3;
-  return sprite(`u:${kind}:${level}:${state}:${size.toFixed(1)}`, box, box, (target) => {
-    drawUnitShape(target, kind, size, { pulse: shownPulse, timer, hp: shownRatio, maxHp: 1, level }, shownTime);
+  // 三级以上的样子和三级一样，等级另外用角标写出来。
+  const look = Math.min(3, level);
+  return sprite(`u:${kind}:${look}:${state}:${size.toFixed(1)}`, box, box, (target) => {
+    drawUnitShape(target, kind, size, { pulse: shownPulse, timer, hp: shownRatio, maxHp: 1, level: look }, shownTime);
   });
 }
 
@@ -524,10 +619,44 @@ function drawUnit(context: Context, unit: ZdUnit, layout: ZdLayout, time: number
   }
   context.globalAlpha = 1;
   if (unit.kind !== "fizz") healthBar(context, x, y + size * 0.44, size * 0.56, ratio, "#7fe08a");
-  // 等级：格子右上角的金点，二级一颗、三级两颗。
-  for (let pip = 0; pip < unit.level - 1; pip += 1) {
-    ellipsePath(context, x + layout.cellWidth / 2 - 11 - pip * 9, y - layout.cellHeight / 2 + 11, 3.4, 3.4);
-    paint(context, GOLD, "rgba(60, 40, 8, .8)", 1);
+  // 酒精灯烧着的时候，前方一格半罩着一片火光。
+  if (unit.pulse > 0 && (unit.kind === "burner" || unit.graft === "burner")) {
+    const width = layout.cellWidth * 0.78;
+    const height = layout.cellHeight * ZD_RULES.burnReach;
+    const cone = sprite("flame", width, height, (target) => {
+      const glow = target.createLinearGradient(0, -height / 2, 0, height / 2);
+      glow.addColorStop(0, "rgba(255, 150, 60, 0)");
+      glow.addColorStop(0.55, "rgba(255, 150, 60, .3)");
+      glow.addColorStop(1, "rgba(255, 220, 130, .55)");
+      target.beginPath();
+      target.moveTo(-width * 0.5, -height / 2);
+      target.lineTo(width * 0.5, -height / 2);
+      target.lineTo(width * 0.22, height / 2);
+      target.lineTo(-width * 0.22, height / 2);
+      target.closePath();
+      target.fillStyle = glow;
+      target.fill();
+    });
+    stamp(context, cone, x, y - size * 0.3 - height / 2, width, height);
+  }
+  if (unit.level <= 3) {
+    // 等级：格子右上角的金点，二级一颗、三级两颗。
+    for (let pip = 0; pip < unit.level - 1; pip += 1) {
+      ellipsePath(context, x + layout.cellWidth / 2 - 11 - pip * 9, y - layout.cellHeight / 2 + 11, 3.4, 3.4);
+      paint(context, GOLD, "rgba(60, 40, 8, .8)", 1);
+    }
+  } else {
+    // 四级以上换成写着级数的金牌。
+    const badge = sprite(`lv:${unit.level}`, 30, 16, (target) => {
+      roundedPath(target, -14, -7, 28, 14, 7);
+      paint(target, vertical(target, -7, 7, lighten(GOLD, 0.25), darken(GOLD, 0.12)), "rgba(60, 40, 8, .8)", 1);
+      target.font = "800 10px ui-rounded, \"SF Pro Rounded\", system-ui, sans-serif";
+      target.textAlign = "center";
+      target.textBaseline = "middle";
+      target.fillStyle = "#3a2a05";
+      target.fillText(String(unit.level), 0, 0.5);
+    });
+    stamp(context, badge, x + layout.cellWidth / 2 - 18, y - layout.cellHeight / 2 + 11, 30, 16);
   }
 }
 
@@ -536,6 +665,8 @@ const ZOMBIE_LOOK: Record<ZdZombieKind, { scale: number; coat: string; skin: str
   runner: { scale: 0.94, coat: "#ffcf5c", skin: "#b6d3a8", pace: 13 },
   beaker: { scale: 1, coat: "#e8e6f2", skin: "#a3c098", pace: 6 },
   giant: { scale: 1.36, coat: "#454266", skin: "#93b08a", pace: 4 },
+  thesis: { scale: 1.5, coat: "#d9d2c0", skin: "#9fbd94", pace: 4.4 },
+  mentor: { scale: 1.78, coat: "#2f3a55", skin: "#8fa888", pace: 3.2 },
 };
 
 /**
@@ -579,7 +710,7 @@ function drawZombieBody(context: Context, kind: ZdZombieKind, biting: boolean, i
     context.lineTo(size * 0.01, size * 0.2);
     context.lineTo(-size * 0.02, size * 0.15);
     context.closePath();
-    paint(context, zombie.kind === "giant" ? GOLD : "#c2475a", null);
+    paint(context, zombie.kind === "giant" || zombie.kind === "mentor" ? GOLD : "#c2475a", null);
   }
   // 向前伸的两只手
   for (const side of [-1, 1]) {
@@ -660,6 +791,42 @@ function drawZombieBody(context: Context, kind: ZdZombieKind, biting: boolean, i
     context.quadraticCurveTo(size * 0.3, headY - size * 0.2, size * 0.3, headY - size * 0.04);
     context.lineWidth = 1.8;
     context.strokeStyle = GOLD;
+    context.stroke();
+  } else if (zombie.kind === "thesis") {
+    // 顶着一摞被打回来的论文
+    for (const [index, tilt] of [[0, -0.08], [1, 0.07], [2, -0.03]]) {
+      context.save();
+      context.translate(0, headY - size * (0.2 + index * 0.055));
+      context.rotate(tilt);
+      roundedPath(context, -size * 0.21, -size * 0.03, size * 0.42, size * 0.06, size * 0.01);
+      paint(context, "#fdfdf6", "rgba(80, 80, 110, .55)", 1);
+      context.restore();
+    }
+    context.beginPath();
+    context.moveTo(-size * 0.05, headY - size * 0.35);
+    context.lineTo(size * 0.05, headY - size * 0.29);
+    context.moveTo(size * 0.05, headY - size * 0.35);
+    context.lineTo(-size * 0.05, headY - size * 0.29);
+    context.lineWidth = 1.8;
+    context.strokeStyle = "#e11d2e";
+    context.stroke();
+  } else if (zombie.kind === "mentor") {
+    // 地中海发型和一副眼镜
+    context.beginPath();
+    context.arc(0, headY - size * 0.04, size * 0.25, Math.PI * 1.06, Math.PI * 1.3);
+    context.arc(0, headY - size * 0.04, size * 0.25, Math.PI * 1.7, Math.PI * 1.94);
+    context.lineWidth = size * 0.055;
+    context.strokeStyle = "#3a3550";
+    context.stroke();
+    context.lineWidth = 1.8;
+    context.strokeStyle = "#1f1c2e";
+    for (const [x, r] of [[-0.1, 0.09], [0.11, 0.075]]) {
+      ellipsePath(context, x * size, headY - size * 0.01, r * size, r * size * 1.05);
+      context.stroke();
+    }
+    context.beginPath();
+    context.moveTo(-size * 0.015, headY - size * 0.02);
+    context.lineTo(size * 0.04, headY - size * 0.02);
     context.stroke();
   } else {
     // 挂科通知单
@@ -756,7 +923,21 @@ function drawShot(context: Context, shot: ZdShot, layout: ZdLayout) {
   const x = layout.left + (shot.lane + 0.5) * layout.cellWidth;
   const y = layout.top + shot.y * layout.cellHeight;
   // 子弹连拖尾一共 36 高，小图的正中在弹头下方 8 处。
-  stamp(context, sprite(`s:${shot.kind}`, 20, 44, (target) => paintShot(target, shot.kind, 0, -8)), x, y + 8, 20, 44);
+  stamp(context, sprite(`s:${shot.kind}:${shot.tint}`, 24, 48, (target) => {
+    if (shot.tint) {
+      // 点燃的带一团火光，带寒气的带一团冷光。
+      ellipsePath(target, 0, -8, 11, 15);
+      target.fillStyle = shot.tint === "fire" ? "rgba(255, 150, 50, .5)" : "rgba(150, 225, 255, .5)";
+      target.fill();
+    }
+    paintShot(target, shot.kind, 0, -8);
+    if (shot.tint) {
+      target.globalCompositeOperation = "source-atop";
+      target.fillStyle = shot.tint === "fire" ? "rgba(255, 130, 30, .4)" : "rgba(170, 230, 255, .45)";
+      target.fillRect(-12, -24, 24, 48);
+      target.globalCompositeOperation = "source-over";
+    }
+  }), x, y + 8, 24, 48);
 }
 
 function paintShot(context: Context, kind: ZdShot["kind"], x: number, y: number) {
@@ -823,6 +1004,15 @@ function drawEffect(context: Context, effect: ZdEffect, layout: ZdLayout) {
     context.fillStyle = GOLD;
     context.fillText(label, x, y - 8 - progress * 24);
     context.globalAlpha = 1;
+  } else if (effect.kind === "beam") {
+    // 安瓿炮的一发：从炮口一直亮到药圃顶上。
+    const fade = 1 - progress;
+    const width = 9 * fade + 2;
+    const color = effect.tint === "fire" ? "255, 150, 60" : effect.tint === "frost" ? "150, 225, 255" : "255, 214, 120";
+    context.fillStyle = `rgba(${color}, ${0.7 * fade})`;
+    context.fillRect(x - width / 2, layout.top, width, Math.max(0, y - layout.top));
+    context.fillStyle = `rgba(255, 255, 255, ${0.9 * fade})`;
+    context.fillRect(x - width / 6, layout.top, width / 3, Math.max(0, y - layout.top));
   } else if (effect.kind === "level") {
     // 升级：一圈金光加几颗上升的星点
     ellipsePath(context, x, y, layout.cellWidth * (0.25 + progress * 0.35), layout.cellHeight * (0.25 + progress * 0.35));

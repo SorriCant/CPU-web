@@ -18,6 +18,7 @@ import {
   zdGraft,
   zdGraftBlocker,
   zdGraftCost,
+  zdHybridOf,
   zdMaxScoreThroughWave,
   zdNextUpgrade,
   zdPlace,
@@ -30,17 +31,19 @@ import {
   zdUnitStats,
   zdUpgrade,
   zdUpgradeBlocker,
+  zdUpgradeFor,
   zdWaveBudget,
   zdWaveHpScale,
   zdWaveStartSeconds,
   zdZombiePoints,
-  ZD_HYBRID_NAMES,
-  ZD_MAX_LEVEL,
+  ZD_HYBRIDS,
   ZD_RULES,
+  ZD_TABLE_LEVEL,
   ZD_UNIT_ORDER,
   ZD_UNITS,
   ZD_UPGRADES,
   ZD_ZOMBIES,
+  type ZdShot,
   type ZdState,
   type ZdUnitKind,
   type ZdZombieKind,
@@ -67,10 +70,10 @@ function addZombie(state: ZdState, kind: ZdZombieKind, lane: number, y: number) 
   return zombie;
 }
 
-test("五路七格的药圃和五种药材", () => {
+test("五路七格的药圃和八种药材", () => {
   assert.equal(ZD_RULES.lanes, 5);
   assert.equal(ZD_RULES.rows, 7);
-  assert.deepEqual([...ZD_UNIT_ORDER], ["mortar", "capsule", "mint", "cabinet", "fizz"]);
+  assert.deepEqual([...ZD_UNIT_ORDER], ["mortar", "capsule", "mint", "cabinet", "fizz", "ampoule", "burner", "drip"]);
   for (const kind of ZD_UNIT_ORDER) {
     assert.equal(ZD_UNITS[kind].kind, kind);
     assert.ok(ZD_UNITS[kind].cost > 0 && ZD_UNITS[kind].hp > 0 && ZD_UNITS[kind].cooldown > 0, kind);
@@ -183,7 +186,7 @@ test("泡腾片炸开周围一圈，够不着的僵尸不受影响", () => {
   assert.equal(state.score, zdZombiePoints("walker") + zdZombiePoints("runner"));
 });
 
-test("点已种下的药材可以升级，最高三级，泡腾片不能升", () => {
+test("点已种下的药材可以升级，三级以上没有封顶，泡腾片不能升", () => {
   const state = arena();
   assert.equal(zdUpgradeBlocker(state, 0, 0), "这一格没有药材");
   zdPlace(state, "capsule", 0, 6);
@@ -200,16 +203,35 @@ test("点已种下的药材可以升级，最高三级，泡腾片不能升", ()
   assert.equal(unit.maxHp, zdUnitStats("capsule", 2).hp);
   // 升级不占种植冷却，可以连着升。
   assert.equal(zdUpgrade(state, 0, 6), true);
-  assert.equal(unit.level, ZD_MAX_LEVEL);
-  assert.equal(zdNextUpgrade(unit), null);
-  assert.equal(zdUpgradeBlocker(state, 0, 6), "已经满级");
+  assert.equal(unit.level, ZD_TABLE_LEVEL);
+  // 三级以上没有封顶：每升一级，伤害、血量和花费都按比例涨。
+  const fourth = zdNextUpgrade(unit)!;
+  assert.equal(fourth.cost, Math.round((ZD_UPGRADES.capsule[1].cost * ZD_RULES.levelCost) / 5) * 5);
+  assert.deepEqual(fourth, zdUpgradeFor("capsule", 3));
+  state.energy = 1e9;
+  for (let level = 4; level <= 12; level += 1) {
+    const next = zdNextUpgrade(unit)!;
+    const before = zdUnitStats("capsule", unit.level);
+    assert.equal(zdUpgrade(state, 0, 6), true);
+    const after = zdUnitStats("capsule", unit.level);
+    assert.equal(unit.level, level);
+    assert.ok(after.damage > before.damage && after.hp > before.hp, String(level));
+    assert.equal(unit.maxHp, after.hp);
+    assert.ok(zdNextUpgrade(unit)!.cost > next.cost, String(level));
+  }
+  assert.equal(zdUnitStats("capsule", 12).shots, 3);
+  // 花费涨得比数值快：越往上越不划算。
+  assert.ok(ZD_RULES.levelCost > ZD_RULES.levelPower && ZD_RULES.levelPower > 1);
+  assert.ok(zdUnitStats("mortar", 8).energy > zdUnitStats("mortar", 3).energy * 4);
+  assert.ok(zdUnitStats("cabinet", 6).thorns > zdUnitStats("cabinet", 3).thorns);
   assert.ok(state.events.includes("upgrade"));
 
   state.cooldowns.fizz = 0;
   zdPlace(state, "fizz", 1, 6);
   assert.equal(zdUpgradeBlocker(state, 1, 6), "泡腾片不能升级");
+  assert.equal(zdUpgradeFor("fizz", 1), null);
   for (const kind of ZD_UNIT_ORDER) {
-    assert.equal(ZD_UPGRADES[kind].length, kind === "fizz" ? 0 : ZD_MAX_LEVEL - 1, kind);
+    assert.equal(ZD_UPGRADES[kind].length, kind === "fizz" ? 0 : ZD_TABLE_LEVEL - 1, kind);
     for (const upgrade of ZD_UPGRADES[kind]) assert.ok(upgrade.cost > 0 && upgrade.summary.length > 0, kind);
   }
 });
@@ -337,7 +359,7 @@ test("每波的僵尸不超过预算，血量逐波上涨，每五波来一大�
   }
 });
 
-test("什么都不种撑不过一分钟，摆满射手且药力无限、全部升满也终究守不住", () => {
+test("什么都不种撑不过一分钟，摆满射手且药力无限、全部升到三级也终究守不住", () => {
   const idle = createZdState(11);
   advance(idle, 120);
   assert.equal(idle.over, true);
@@ -357,7 +379,7 @@ test("什么都不种撑不过一分钟，摆满射手且药力无限、全部�
   assert.equal(full.over, true);
   assert.ok(full.wave >= 15 && full.wave <= 32, String(full.wave));
 
-  // 同样的作弊条件再把每一株都升满：撑得更久，但仍然会输。
+  // 同样的作弊条件再把每一株都升到三级：撑得更久，但仍然会输。
   const maxed = createZdState(11);
   while (!maxed.over && maxed.time < 30 * 60) {
     maxed.energy = 999999;
@@ -365,7 +387,8 @@ test("什么都不种撑不过一分钟，摆满射手且药力无限、全部�
     for (let lane = 0; lane < ZD_RULES.lanes; lane += 1) {
       for (let row = 0; row < ZD_RULES.rows; row += 1) {
         zdPlace(maxed, row === 0 ? "cabinet" : row === 3 ? "mint" : "capsule", lane, row);
-        while (zdUpgrade(maxed, lane, row));
+        const unit = zdUnitAt(maxed, lane, row);
+        while (unit && unit.level < ZD_TABLE_LEVEL && zdUpgrade(maxed, lane, row));
       }
     }
     zdStep(maxed, STEP);
@@ -382,8 +405,8 @@ test("服务端的波次时间表和分数上限与页面引擎一致", () => {
     assert.equal(maxZombieDefenseScoreThroughWave(wave), zdMaxScoreThroughWave(wave), `第 ${wave} 波`);
     if (wave > 0) assert.equal(minimumDurationForZombieWaves(wave), zdWaveStartSeconds(wave) * 1000);
   }
-  assert.equal(ZOMBIE_DEFENSE_MAX_WAVES, 135);
-  assert.equal(ZOMBIE_DEFENSE_MAX_SCORE, maxZombieDefenseScoreThroughWave(135));
+  assert.equal(ZOMBIE_DEFENSE_MAX_WAVES, 360);
+  assert.equal(ZOMBIE_DEFENSE_MAX_SCORE, maxZombieDefenseScoreThroughWave(360));
 
   // 一整局打下来，分数始终不超过当时波次的上限。
   const state = createZdState(42);
@@ -418,9 +441,9 @@ test("对不上波次的分数、伪造的时长会被拒绝", () => {
   assert.match(validateZombieDefenseResult({ score: 1_500, waves: 11, durationMs: 60_000, serverElapsedMs: 61_000 }) || "", /时长不匹配/);
   assert.match(validateZombieDefenseResult({ score: 100, waves: 5, durationMs: 200_000, serverElapsedMs: 30_000 }) || "", /时长不匹配/);
   assert.match(validateZombieDefenseResult({ score: 100, waves: 3, durationMs: 90_000, serverElapsedMs: 60_000 }) || "", /客户端/);
-  assert.match(validateZombieDefenseResult({ score: ZOMBIE_DEFENSE_MAX_SCORE + 1, waves: 135, durationMs: 300_000, serverElapsedMs: 300_000 }) || "", /范围/);
-  assert.match(validateZombieDefenseResult({ score: 0, waves: 136, durationMs: 300_000, serverElapsedMs: 300_000 }) || "", /范围/);
-  assert.match(validateZombieDefenseResult({ score: 0, waves: 1, durationMs: 12_000, serverElapsedMs: 46 * 60 * 1000 }) || "", /过期/);
+  assert.match(validateZombieDefenseResult({ score: ZOMBIE_DEFENSE_MAX_SCORE + 1, waves: ZOMBIE_DEFENSE_MAX_WAVES, durationMs: 300_000, serverElapsedMs: 300_000 }) || "", /范围/);
+  assert.match(validateZombieDefenseResult({ score: 0, waves: ZOMBIE_DEFENSE_MAX_WAVES + 1, durationMs: 300_000, serverElapsedMs: 300_000 }) || "", /范围/);
+  assert.match(validateZombieDefenseResult({ score: 0, waves: 1, durationMs: 12_000, serverElapsedMs: 121 * 60 * 1000 }) || "", /过期/);
 });
 
 test("云端成就覆盖局数、单局分数、单局波次与累计", () => {
@@ -487,19 +510,24 @@ test("杂交：把一种药材种到另一种上，一格里有两种本事，�
   assert.equal(tough.level, 3);
   assert.equal(tough.maxHp, Math.round(zdUnitStats("cabinet", 3).hp + zdUnitStats("capsule", 3).hp * ZD_RULES.hybridHpShare));
   assert.equal(zdUnitName(tough), "铁柜射手");
-  assert.equal(zdNextUpgrade(tough), null);
+  assert.equal(zdNextUpgrade(tough)!.cost, zdUpgradeFor("capsule", 3)!.cost + zdUpgradeFor("cabinet", 3)!.cost);
 
-  // 十种组合都有名字，种的先后不影响名字。
+  // 二十八种组合都有名字和专属效果，种的先后不影响结果。
+  const names = new Set<string>();
   for (const [index, first] of ZD_UNIT_ORDER.entries()) {
     for (const second of ZD_UNIT_ORDER.slice(index + 1)) {
-      const name = ZD_HYBRID_NAMES[`${first}+${second}`];
-      assert.ok(name, `${first}+${second}`);
-      assert.equal(zdUnitName({ kind: first, graft: second }), name);
-      assert.equal(zdUnitName({ kind: second, graft: first }), name);
+      const hybrid = ZD_HYBRIDS[first + "+" + second];
+      assert.ok(hybrid && hybrid.name && hybrid.perk, first + "+" + second);
+      assert.equal(zdHybridOf(first, second), hybrid);
+      assert.equal(zdHybridOf(second, first), hybrid);
+      assert.equal(zdUnitName({ kind: first, graft: second }), hybrid.name);
+      assert.equal(zdUnitName({ kind: second, graft: first }), hybrid.name);
+      names.add(hybrid.name);
     }
+    assert.equal(zdHybridOf(first, first), null);
   }
-  assert.equal(Object.keys(ZD_HYBRID_NAMES).length, 10);
-  assert.equal(new Set(Object.values(ZD_HYBRID_NAMES)).size, 10);
+  assert.equal(Object.keys(ZD_HYBRIDS).length, 28);
+  assert.equal(names.size, 28);
 });
 
 test("杂交药材两种本事一起升级，花费相加；杂交上研钵会产药力，杂交上药柜会反伤", () => {
@@ -594,10 +622,247 @@ test("僵尸先啃靠上的那一格，不会隔着它去啃后面的", () => {
   assert.equal(lower.hp, lower.maxHp);
 });
 
-test("种满升满以后不再补种：杂交过的药圃守得更久，但也终究守不住", () => {
-  const hold = (graftFor: (row: number) => ZdUnitKind | null) => {
+test("安瓿炮一发打穿整路，酒精灯只烧够得着的，输液架给周围回血", () => {
+  const lane = arena();
+  zdPlace(lane, "ampoule", 2, 6);
+  const near = addZombie(lane, "beaker", 2, 4);
+  const far = addZombie(lane, "beaker", 2, 1);
+  const other = addZombie(lane, "beaker", 3, 3);
+  advance(lane, 1.2);
+  const damage = zdUnitStats("ampoule", 1).damage;
+  assert.equal(near.hp, near.maxHp - damage);
+  assert.equal(far.hp, far.maxHp - damage);
+  assert.equal(other.hp, other.maxHp);
+  assert.equal(lane.shots.length, 0);
+  assert.ok(lane.events.includes("beam"));
+
+  const fire = arena();
+  zdPlace(fire, "burner", 1, 5);
+  const close = addZombie(fire, "giant", 1, 4.4);
+  const closeToo = addZombie(fire, "giant", 1, 3.8);
+  const outOfReach = addZombie(fire, "giant", 1, 2.5);
+  for (const zombie of fire.zombies) zombie.slow = 999;
+  advance(fire, 1);
+  const burnt = zdUnitStats("burner", 1).burn;
+  assert.ok(Math.abs(close.maxHp - close.hp - burnt) < burnt * 0.1, String(close.maxHp - close.hp));
+  assert.ok(closeToo.hp < closeToo.maxHp);
+  assert.equal(outOfReach.hp, outOfReach.maxHp);
+
+  const ward = arena();
+  zdPlace(ward, "drip", 2, 3);
+  zdPlace(ward, "cabinet", 2, 2);
+  zdPlace(ward, "capsule", 3, 4);
+  ward.cooldowns.capsule = 0;
+  zdPlace(ward, "capsule", 0, 3);
+  const drip = zdUnitAt(ward, 2, 3)!;
+  const wall = zdUnitAt(ward, 2, 2)!;
+  const corner = zdUnitAt(ward, 3, 4)!;
+  const distant = zdUnitAt(ward, 0, 3)!;
+  for (const unit of [drip, wall, corner, distant]) unit.hp = 10;
+  advance(ward, 1);
+  const healed = zdUnitStats("drip", 1).heal;
+  assert.ok(Math.abs(wall.hp - 10 - healed) < healed * 0.1, String(wall.hp));
+  assert.ok(corner.hp > 10);
+  assert.equal(distant.hp, 10);
+  assert.equal(drip.hp, 10, "单独的输液架不给自己回血");
+});
+
+test("泡腾片至少炸掉四成血，后期的大僵尸也照样疼", () => {
+  const state = arena();
+  const small = addZombie(state, "walker", 2, 3);
+  const boss = addZombie(state, "mentor", 2, 3.4);
+  boss.hp = boss.maxHp = 200_000;
+  for (const zombie of state.zombies) zombie.slow = 999;
+  state.cooldowns.fizz = 0;
+  zdPlace(state, "fizz", 2, 4);
+  advance(state, 1);
+  assert.ok(!state.zombies.includes(small));
+  assert.equal(boss.hp, boss.maxHp * (1 - ZD_RULES.fizzShare));
+});
+
+test("后期的两种僵尸到了波次才出场，一只占很多预算", () => {
+  assert.ok(ZD_ZOMBIES.thesis.fromWave > ZD_ZOMBIES.giant.fromWave && ZD_ZOMBIES.mentor.fromWave > ZD_ZOMBIES.thesis.fromWave);
+  assert.ok(ZD_ZOMBIES.mentor.cost > ZD_ZOMBIES.thesis.cost && ZD_ZOMBIES.thesis.cost > ZD_ZOMBIES.giant.cost);
+  const state = createZdState(5);
+  const seen = new Map<string, number>();
+  while (state.wave < 30) {
+    // 只看刷怪表：把场上清空，免得对局结束。
+    state.zombies.length = 0;
+    zdStep(state, 0.5);
+    for (const spawn of state.spawns) if (!seen.has(spawn.kind)) seen.set(spawn.kind, spawn.wave);
+  }
+  assert.ok((seen.get("thesis") ?? 0) >= ZD_ZOMBIES.thesis.fromWave, String(seen.get("thesis")));
+  assert.ok((seen.get("mentor") ?? 0) >= ZD_ZOMBIES.mentor.fromWave, String(seen.get("mentor")));
+  assert.equal(zdZombiePoints("mentor"), ZD_ZOMBIES.mentor.cost * ZD_RULES.pointsPerBudget);
+});
+
+test("杂交品种各有专属效果：点燃、寒气、穿甲、炸开", () => {
+  const shotOf = (base: ZdUnitKind, graft: ZdUnitKind, level = 1) => {
+    const state = arena();
+    zdPlace(state, base, 0, 6);
+    for (const kind of ZD_UNIT_ORDER) state.cooldowns[kind] = 0;
+    assert.equal(zdGraft(state, graft, 0, 6), true);
+    for (let index = 1; index < level; index += 1) zdUpgrade(state, 0, 6);
+    addZombie(state, "mentor", 0, 0.5);
+    const shots: ZdShot[] = [];
+    for (let step = 0; step < 20 && !shots.length; step += 1) {
+      zdStep(state, STEP);
+      shots.push(...state.shots);
+    }
+    return { state, shot: shots.find((shot) => shot.kind === "capsule") ?? shots[0] };
+  };
+  // 火焰射手：胶囊被点燃，伤害翻倍。
+  const flaming = shotOf("capsule", "burner").shot;
+  assert.equal(flaming.tint, "fire");
+  assert.equal(flaming.damage, zdUnitStats("capsule", 1).damage * ZD_RULES.igniteFactor);
+  // 双生射手：胶囊也带减速。
+  const chilled = shotOf("capsule", "mint").shot;
+  assert.equal(chilled.tint, "frost");
+  assert.equal(chilled.slowSeconds, zdUnitStats("mint", 1).slowSeconds);
+  // 没杂交的胶囊什么都不带。
+  const plain = arena();
+  zdPlace(plain, "capsule", 0, 6);
+  addZombie(plain, "mentor", 0, 0.5);
+  advance(plain, 0.5);
+  assert.deepEqual([plain.shots[0].tint, plain.shots[0].slowSeconds, plain.shots[0].pierce, plain.shots[0].splash, plain.shots[0].bounty], ["", 0, 0, 0, false]);
+
+  // 穿甲射手：一颗胶囊打两只。
+  const piercing = arena();
+  zdPlace(piercing, "capsule", 1, 6);
+  zdGraft(piercing, "ampoule", 1, 6);
+  zdUnitAt(piercing, 1, 6)!.second!.timer = 999;
+  const first = addZombie(piercing, "giant", 1, 4);
+  const second = addZombie(piercing, "giant", 1, 3);
+  const third = addZombie(piercing, "giant", 1, 2);
+  for (const zombie of piercing.zombies) zombie.slow = 999;
+  advance(piercing, 1);
+  const hit = zdUnitStats("capsule", 1).damage;
+  assert.equal(first.hp, first.maxHp - hit);
+  assert.equal(second.hp, second.maxHp - hit);
+  assert.equal(third.hp, third.maxHp);
+
+  // 泡腾机枪：每轮最后一颗炸开一小圈，旁边一路的也挨到。
+  const gun = arena();
+  zdPlace(gun, "capsule", 2, 6);
+  gun.cooldowns.fizz = 0;
+  zdGraft(gun, "fizz", 2, 6);
+  const target = addZombie(gun, "giant", 2, 4);
+  const beside = addZombie(gun, "giant", 3, 4.2);
+  const away = addZombie(gun, "giant", 4, 4);
+  for (const zombie of gun.zombies) zombie.slow = 999;
+  advance(gun, 1);
+  assert.equal(target.hp, target.maxHp - hit);
+  assert.equal(beside.hp, beside.maxHp - hit);
+  assert.equal(away.hp, away.maxHp);
+
+  // 喷火安瓿和冷冻安瓿：整路翻倍、整路减速。
+  const beam = arena();
+  zdPlace(beam, "ampoule", 0, 6);
+  zdGraft(beam, "burner", 0, 6);
+  zdPlace(beam, "ampoule", 4, 6);
+  beam.cooldowns.ampoule = 0;
+  zdPlace(beam, "ampoule", 4, 6);
+  zdGraft(beam, "mint", 4, 6);
+  const burning = addZombie(beam, "mentor", 0, 0.5);
+  const frozen = addZombie(beam, "mentor", 4, 0.5);
+  const tints = new Set<string>();
+  for (let step = 0; step < 36; step += 1) {
+    zdStep(beam, STEP);
+    for (const effect of beam.effects) if (effect.kind === "beam") tints.add(effect.tint ?? "");
+  }
+  assert.equal(burning.hp, burning.maxHp - zdUnitStats("ampoule", 1).damage * ZD_RULES.igniteFactor);
+  assert.ok(frozen.slow > 0);
+  assert.deepEqual([...tints].sort(), ["fire", "frost"]);
+});
+
+test("杂交品种各有专属效果：掉药力、挨啃发狠、烧啃它的、自己回血、冻住、急救", () => {
+  // 研钵射手：它击退的僵尸额外掉药力。
+  const bounty = arena();
+  zdPlace(bounty, "capsule", 0, 6);
+  zdGraft(bounty, "mortar", 0, 6);
+  zdUnitAt(bounty, 0, 6)!.second!.timer = 999;
+  const prey = addZombie(bounty, "beaker", 0, 3);
+  prey.hp = 5;
+  bounty.passiveTimer = 999;
+  const energy = bounty.energy;
+  advance(bounty, 1.5);
+  assert.equal(bounty.zombies.length, 0);
+  assert.equal(bounty.energy - energy, Math.round(ZD_ZOMBIES.beaker.cost * ZD_RULES.bountyPerCost));
+
+  // 铁柜射手：挨啃时射速快一倍。
+  const volleys = (bitten: boolean) => {
+    const state = arena();
+    zdPlace(state, "capsule", 0, 5);
+    zdGraft(state, "cabinet", 0, 5);
+    const zombie = addZombie(state, "mentor", 0, bitten ? 5.2 : 1);
+    zombie.slow = 999;
+    let count = 0;
+    for (let step = 0; step < 30 * 12; step += 1) {
+      zdStep(state, STEP);
+      count += state.events.filter((event) => event === "shoot").length;
+      state.events.length = 0;
+      zdUnitAt(state, 0, 5)!.hp = zdUnitAt(state, 0, 5)!.maxHp;
+    }
+    return count;
+  };
+  const calm = volleys(false);
+  const angry = volleys(true);
+  assert.ok(angry >= calm * 1.8 && angry <= calm * 2.2, `${angry} / ${calm}`);
+
+  // 火焰药柜烧啃它的僵尸；寒冰药柜让啃它的僵尸一直减速。
+  const walls = arena();
+  zdPlace(walls, "cabinet", 0, 3);
+  zdGraft(walls, "burner", 0, 3);
+  walls.cooldowns.cabinet = 0;
+  zdPlace(walls, "cabinet", 4, 3);
+  zdGraft(walls, "mint", 4, 3);
+  zdUnitAt(walls, 4, 3)!.second!.timer = 999;
+  const scorched = addZombie(walls, "mentor", 0, 3.2);
+  const chilled = addZombie(walls, "mentor", 4, 3.2);
+  advance(walls, 1);
+  const perSecond = zdUnitStats("burner", 1).burn * (1 + ZD_RULES.fireWallFactor);
+  assert.ok(Math.abs(scorched.maxHp - scorched.hp - perSecond) < perSecond * 0.12, String(scorched.maxHp - scorched.hp));
+  assert.ok(chilled.slow > 0);
+
+  // 自愈药柜：自己回血，而且快三倍；单独的药柜不会回血。
+  const regen = arena();
+  zdPlace(regen, "cabinet", 2, 3);
+  zdGraft(regen, "drip", 2, 3);
+  const self = zdUnitAt(regen, 2, 3)!;
+  self.hp = 100;
+  advance(regen, 1);
+  const expected = zdUnitStats("drip", 1).heal * ZD_RULES.wallRegenFactor;
+  assert.ok(Math.abs(self.hp - 100 - expected) < expected * 0.1, String(self.hp));
+
+  // 冰爆薄荷：被啃掉时炸开并冻住周围的僵尸。急救泡腾：炸开并把周围药材回满。
+  const blast = arena();
+  zdPlace(blast, "mint", 1, 3);
+  blast.cooldowns.fizz = 0;
+  zdGraft(blast, "fizz", 1, 3);
+  zdPlace(blast, "drip", 3, 3);
+  blast.cooldowns.fizz = 0;
+  zdGraft(blast, "fizz", 3, 3);
+  zdPlace(blast, "cabinet", 4, 3);
+  const patient = zdUnitAt(blast, 4, 3)!;
+  patient.hp = 50;
+  zdUnitAt(blast, 3, 3)!.timer = 999;
+  const tough = addZombie(blast, "mentor", 1, 3.1);
+  const eater = addZombie(blast, "mentor", 3, 3.1);
+  tough.hp = tough.maxHp = 500_000;
+  eater.hp = eater.maxHp = 500_000;
+  zdUnitAt(blast, 1, 3)!.hp = 1;
+  zdUnitAt(blast, 3, 3)!.hp = 1;
+  advance(blast, 0.2);
+  assert.equal(zdUnitAt(blast, 1, 3), null);
+  assert.equal(zdUnitAt(blast, 3, 3), null);
+  assert.ok(tough.slow > ZD_RULES.frostBlastSeconds - 1);
+  assert.equal(patient.hp, patient.maxHp);
+});
+
+test("种满升到三级以后不再补种：杂交过的药圃守得更久，但也终究守不住；升到十级也一样", () => {
+  const hold = (graftFor: (row: number) => ZdUnitKind | null, level = ZD_TABLE_LEVEL) => {
     const state = createZdState(11);
-    state.energy = 9_999_999;
+    state.energy = 1e12;
     for (let lane = 0; lane < ZD_RULES.lanes; lane += 1) {
       for (let row = 0; row < ZD_RULES.rows; row += 1) {
         for (const kind of ZD_UNIT_ORDER) state.cooldowns[kind] = 0;
@@ -605,12 +870,12 @@ test("种满升满以后不再补种：杂交过的药圃守得更久，但也�
         const graft = graftFor(row);
         for (const kind of ZD_UNIT_ORDER) state.cooldowns[kind] = 0;
         if (graft) assert.equal(zdGraft(state, graft, lane, row), true);
-        while (zdUpgrade(state, lane, row));
+        while (zdUnitAt(state, lane, row)!.level < level && zdUpgrade(state, lane, row));
       }
     }
     state.energy = 0;
     let peak = 0;
-    while (!state.over && state.time < 30 * 60) {
+    while (!state.over && state.time < 60 * 60) {
       zdStep(state, STEP);
       state.events.length = 0;
       peak = Math.max(peak, state.zombies.length);
@@ -620,11 +885,14 @@ test("种满升满以后不再补种：杂交过的药圃守得更久，但也�
   };
   const plain = hold(() => null);
   const hybrid = hold((row) => (row === 0 || row === 3 ? "capsule" : "mint"));
-  assert.ok(plain.wave >= 15 && plain.wave <= 22, String(plain.wave));
-  assert.ok(hybrid.wave > plain.wave && hybrid.wave <= 32, `${hybrid.wave} > ${plain.wave}`);
-  assert.ok(hybrid.score <= zdMaxScoreThroughWave(hybrid.wave));
-  // 后期场上同时有上百只僵尸，这是画面要扛住的量。
-  assert.ok(hybrid.peak > 100, String(hybrid.peak));
+  const veteran = hold((row) => (row === 0 || row === 3 ? "capsule" : "mint"), 10);
+  assert.ok(plain.wave >= 15 && plain.wave <= 24, String(plain.wave));
+  assert.ok(hybrid.wave > plain.wave && hybrid.wave <= 36, `${hybrid.wave} > ${plain.wave}`);
+  // 等级没有封顶，但僵尸的血量每波按比例涨：十级的药圃多撑十几波，还是会输。
+  assert.ok(veteran.wave > hybrid.wave + 8 && veteran.wave <= 70, `${veteran.wave} > ${hybrid.wave}`);
+  assert.ok(veteran.score <= zdMaxScoreThroughWave(veteran.wave));
+  // 后期场上同时有几十上百只僵尸，这是画面要扛住的量。
+  assert.ok(hybrid.peak > 40 && veteran.peak > hybrid.peak, `${hybrid.peak} ${veteran.peak}`);
 });
 
 test("云端对局接口挂在小游戏自己的路径下，账号注销时一并清理，游戏页受小游戏隐藏规则约束", () => {

@@ -61,8 +61,9 @@
         <div class="zd-dock">
           <div v-if="focusInfo && !tip" class="zd-upgrade">
             <span>
-              <b>{{ focusInfo.name }} · {{ focusInfo.level }} 级</b>
-              <small>{{ focusInfo.next ? `升级后：${focusInfo.next.summary}` : focusInfo.kind === "fizz" ? "一次性的，不能升级" : focusInfo.graft ? "已经满级" : "已经满级，还可以再杂交一种药材" }}</small>
+              <b>{{ focusInfo.name }} · {{ focusInfo.level }} 级<i v-if="!focusInfo.graft && focusInfo.kind !== 'fizz'"> · 还能杂交</i></b>
+              <small v-if="focusInfo.perk" class="zd-perk">专属：{{ focusInfo.perk }}</small>
+              <small>{{ focusInfo.next ? `升级后：${focusInfo.next.summary}` : focusInfo.kind === "fizz" ? "一次性的，不能升级" : "已经升到头了" }}</small>
             </span>
             <button
               v-if="focusInfo.next"
@@ -70,14 +71,15 @@
               type="button"
               :class="{ short: energy < focusInfo.next.cost }"
               @click.stop="upgradeFocused"
-            >升级 {{ focusInfo.next.cost }}</button>
+            >升级 {{ compact(focusInfo.next.cost) }}</button>
           </div>
           <p v-else class="zd-hint" :class="{ warn: Boolean(tip) }">{{ tip || selectionHint }}</p>
           <div class="zd-bar">
             <div class="zd-energy" :aria-label="`药力 ${energy}`">
               <small>药力</small>
-              <b>{{ energy }}</b>
+              <b :class="{ long: energy >= 10000 }">{{ compact(energy) }}</b>
             </div>
+            <div class="zd-cards">
             <button
               v-for="(kind, index) in ZD_UNIT_ORDER"
               :key="kind"
@@ -106,6 +108,7 @@
               <b aria-hidden="true">铲</b>
               <span>移除</span>
             </button>
+            </div>
           </div>
         </div>
 
@@ -213,12 +216,13 @@
             <b>{{ ZD_UNITS[kind].name }}</b>{{ ZD_UNITS[kind].cost }} 药力 · {{ ZD_UNITS[kind].summary }}
             <small v-for="(upgrade, index) in ZD_UPGRADES[kind]" :key="index">{{ index + 2 }} 级（{{ upgrade.cost }} 药力）：{{ upgrade.summary }}</small>
           </p>
-          <p>升级：不选药材时，直接点已经种下的药材，再点“升级”（或再点它一次）。最高 3 级，升级不用等冷却。</p>
-          <p>杂交：选一种药材，种到另一种已经种下的药材上，这一格就同时有两种本事，血量也更厚。杂交要付这种药材的价钱（那株已经升过级的话，再加上升到同一级的升级费），之后两种本事一起升级。每株只能杂交一次，泡腾片本身不能被杂交。</p>
-          <p v-for="kind in ZD_UNIT_ORDER" :key="'trait-' + kind" class="zd-guide">
-            <b>杂交上{{ ZD_UNITS[kind].name }}</b>{{ ZD_UNITS[kind].trait }}
+          <p>升级：不选药材时，直接点已经种下的药材，再点“升级”（或再点它一次），升级不用等冷却。等级没有封顶：三级以后每升一级，数值和花费都按比例往上涨，花费涨得更快一些。</p>
+          <p>杂交：选一种药材，种到另一种已经种下的药材上，就得到一个新品种——两种药材原来的本事都在，血量更厚，还多一样这个品种独有的效果。杂交要付这种药材的价钱（那株已经升过级的话，再加上升到同一级的升级费），之后两种本事一起升级。每株只能杂交一次，泡腾片本身不能被杂交。</p>
+          <p class="zd-guide zd-hybrids">
+            <b>杂交图鉴</b>
+            <small v-for="(hybrid, pair) in ZD_HYBRIDS" :key="pair">{{ hybrid.name }}（{{ pairLabel(pair) }}）：{{ hybrid.perk }}</small>
           </p>
-          <p>操作：点击 / 触摸选药材和格子，数字键 1 到 5 选药材，6 选铲子，U 升级点中的药材，P 暂停，Esc 返回主页。</p>
+          <p>操作：点击 / 触摸选药材和格子，数字键 1 到 8 选药材，9 选铲子，U 升级点中的药材，P 暂停，Esc 返回主页。</p>
         </div>
       </section>
     </section>
@@ -244,6 +248,7 @@ import {
   zdCooldownRatio,
   zdGraft,
   zdGraftBlocker,
+  zdHybridOf,
   zdNextUpgrade,
   zdPlace,
   zdPlaceBlocker,
@@ -253,6 +258,7 @@ import {
   zdUnitName,
   zdUpgrade,
   zdUpgradeBlocker,
+  ZD_HYBRIDS,
   ZD_UNIT_ORDER,
   ZD_UNITS,
   ZD_UPGRADES,
@@ -266,7 +272,7 @@ type Screen = "menu" | "game" | "ranking" | "achievements" | "history" | "settin
 type GamePhase = "ready" | "playing" | "paused" | "over";
 type Selection = ZdUnitKind | "shovel" | null;
 type HistoryItem = { score: number; waves: number; playedAt: string };
-type FocusInfo = { lane: number; row: number; kind: ZdUnitKind; graft: ZdUnitKind | null; name: string; level: number; next: ZdUpgrade | null };
+type FocusInfo = { lane: number; row: number; kind: ZdUnitKind; graft: ZdUnitKind | null; name: string; perk: string | null; level: number; next: ZdUpgrade | null };
 
 const router = useRouter();
 const auth = useAuthStore();
@@ -450,7 +456,16 @@ function selectCard(value: Exclude<Selection, null>) {
 function focusUnit(lane: number, row: number) {
   const unit = zdUnitAt(game, lane, row);
   focusInfo.value = unit
-    ? { lane, row, kind: unit.kind, graft: unit.graft, name: zdUnitName(unit), level: unit.level, next: zdNextUpgrade(unit) }
+    ? {
+      lane,
+      row,
+      kind: unit.kind,
+      graft: unit.graft,
+      name: zdUnitName(unit),
+      perk: unit.graft ? zdHybridOf(unit.kind, unit.graft)?.perk ?? null : null,
+      level: unit.level,
+      next: zdNextUpgrade(unit),
+    }
     : null;
 }
 
@@ -465,10 +480,22 @@ function upgradeFocused() {
   drawScene();
 }
 
-function showTip(text: string) {
+function showTip(text: string, milliseconds = 1300) {
   tip.value = text;
   window.clearTimeout(tipTimer);
-  tipTimer = window.setTimeout(() => { tip.value = ""; }, 1300);
+  tipTimer = window.setTimeout(() => { tip.value = ""; }, milliseconds);
+}
+
+/** 后期药力和升级费能到几十万、上百万，药材栏里放不下，改用“万”“亿”。 */
+function compact(value: number) {
+  if (value < 100000) return String(value);
+  if (value < 100000000) return `${Math.floor(value / 1000) / 10}万`;
+  return `${Math.floor(value / 10000000) / 10}亿`;
+}
+
+/** 图鉴里“胶囊射手 + 酒精灯”这样的写法。 */
+function pairLabel(pair: string | number) {
+  return String(pair).split("+").map((kind) => ZD_UNITS[kind as ZdUnitKind]?.name ?? kind).join(" + ");
 }
 
 function handleCanvasPointer(event: PointerEvent) {
@@ -493,7 +520,13 @@ function handleCanvasPointer(event: PointerEvent) {
   } else if (selected.value && zdUnitAt(game, cell.lane, cell.row)) {
     const blocker = zdGraftBlocker(game, selected.value, cell.lane, cell.row);
     if (blocker) showTip(blocker);
-    else if (zdGraft(game, selected.value, cell.lane, cell.row)) selected.value = null;
+    else if (zdGraft(game, selected.value, cell.lane, cell.row)) {
+      // 杂交成功：报一下新品种的名字和它独有的效果。
+      const unit = zdUnitAt(game, cell.lane, cell.row);
+      const hybrid = unit?.graft ? zdHybridOf(unit.kind, unit.graft) : null;
+      if (hybrid) showTip(`杂交出${hybrid.name}：${hybrid.perk}`, 3200);
+      selected.value = null;
+    }
   } else if (selected.value) {
     const blocker = zdPlaceBlocker(game, selected.value, cell.lane, cell.row);
     if (blocker) showTip(blocker);
@@ -529,10 +562,10 @@ function handleKeydown(event: KeyboardEvent) {
     }
     return;
   }
-  const digit = /^(?:Digit|Numpad)([1-6])$/.exec(event.code)?.[1];
+  const digit = /^(?:Digit|Numpad)([1-9])$/.exec(event.code)?.[1];
   if (digit && screen.value === "game") {
     event.preventDefault();
-    selectCard(digit === "6" ? "shovel" : ZD_UNIT_ORDER[Number(digit) - 1]);
+    selectCard(digit === "9" ? "shovel" : ZD_UNIT_ORDER[Number(digit) - 1]);
   } else if (event.code === "KeyU" && screen.value === "game" && focusInfo.value) {
     event.preventDefault();
     upgradeFocused();
@@ -579,6 +612,7 @@ function playEvents() {
         playTone(720, 0.03, 0.012);
       }
     } else if (event === "boom") playTone(110, 0.3, 0.07);
+    else if (event === "beam") playTone(250, 0.14, 0.035);
     else if (event === "place") playTone(520, 0.06, 0.035);
     else if (event === "upgrade" || event === "graft") {
       playTone(event === "graft" ? 587 : 660, 0.07, 0.035);
@@ -881,6 +915,7 @@ function writeStorage(key: string, value: string) {
 .zd-shell .flight-settings-panel > .zd-guide { margin-top: -6px; }
 .zd-guide b { margin-right: 8px; color: #2f6b3a; }
 .zd-guide small { display: block; margin-top: 2px; color: #7b8676; font-size: 9px; }
+.zd-hybrids small { margin-top: 4px; font-size: 10px; line-height: 1.5; }
 
 /* 对局画面：深色半透明的浮层，不用粗边框和硬阴影。 */
 .zd-shell .game-phone { background: #1c3a31; }
@@ -993,6 +1028,8 @@ function writeStorage(key: string, value: string) {
 .zd-upgrade span { display: grid; min-width: 0; gap: 2px; line-height: 1.15; }
 .zd-upgrade b { color: var(--zd-text); font-size: 12px; font-weight: 700; }
 .zd-upgrade small { overflow: hidden; color: var(--zd-muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.zd-upgrade small.zd-perk { color: var(--zd-gold); }
+.zd-upgrade b i { color: var(--zd-muted); font-size: 10px; font-style: normal; font-weight: 500; }
 .zd-upgrade button {
   flex: 0 0 auto;
   min-height: 30px;
@@ -1028,12 +1065,20 @@ function writeStorage(key: string, value: string) {
 }
 .zd-energy small { color: var(--zd-muted); font-size: 10px; font-weight: 600; }
 .zd-energy b { color: var(--zd-gold); font-size: 17px; font-weight: 800; letter-spacing: -.02em; }
+.zd-energy b.long { font-size: 12px; white-space: nowrap; }
+
+.zd-cards {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 0;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+}
 
 .zd-card {
   position: relative;
   display: grid;
   min-width: 0;
-  flex: 1 1 0;
   justify-items: center;
   gap: 2px;
   padding: 4px 2px 5px;
@@ -1047,7 +1092,7 @@ function writeStorage(key: string, value: string) {
   -webkit-tap-highlight-color: transparent;
   transition: transform .12s ease, background-color .12s ease;
 }
-.zd-card canvas { width: 40px; height: 40px; }
+.zd-card canvas { width: 34px; height: 34px; }
 .zd-card span { color: var(--zd-gold); font-size: 11px; font-weight: 700; line-height: 1; }
 .zd-card em {
   position: absolute;
@@ -1070,7 +1115,7 @@ function writeStorage(key: string, value: string) {
   background: rgba(8, 12, 14, .6);
   pointer-events: none;
 }
-.zd-shovel { flex: 0 0 44px; align-content: center; }
+.zd-shovel { grid-column: span 2; align-content: center; }
 .zd-shovel b { font-size: 16px; font-weight: 800; line-height: 1.2; }
 .zd-shovel span { color: var(--zd-muted); font-size: 10px; font-weight: 500; }
 

@@ -1,4 +1,5 @@
-export const ZOMBIE_DEFENSE_MAX_ATTEMPT_MS = 45 * 60 * 1000;
+// 升级不封顶以后一局能打很久，时长上限放到两小时。
+export const ZOMBIE_DEFENSE_MAX_ATTEMPT_MS = 120 * 60 * 1000;
 // 波次按固定时间表开始：第 1 波在开局 10 秒，之后每 20 秒一波。页面的引擎用同一组数，测试会核对两边一致。
 export const ZOMBIE_DEFENSE_FIRST_WAVE_MS = 10_000;
 export const ZOMBIE_DEFENSE_WAVE_MS = 20_000;
