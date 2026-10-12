@@ -6,7 +6,7 @@
         ref="canvasEl"
         class="game-canvas"
         role="img"
-        aria-label="贪吃奶龙游戏区域"
+        aria-label="药大人能吃游戏区域"
         tabindex="0"
         @pointerdown="handlePointerDown"
         @pointermove="handlePointerMove"
@@ -17,7 +17,7 @@
       <section v-if="screen === 'menu'" class="menu-screen">
         <button data-cpu-button="surface" type="button" class="corner-back" aria-label="返回小游戏" @click="router.push(MINI_GAMES_PATH)">←</button>
         <canvas ref="menuArtEl" class="menu-emblem" width="248" height="248" role="img" aria-label="系着围兜、举着刀叉的奶龙"></canvas>
-        <h1>贪吃奶龙</h1>
+        <h1>药大人能吃</h1>
         <p class="menu-tagline">滑动带路，吃得越多身子越长</p>
         <div class="best-score-box">
           <span>最高分</span>

@@ -64,7 +64,7 @@ export const miniGames: MiniGame[] = [
   },
   {
     slug: "greedy-nailong",
-    name: "贪吃奶龙",
+    name: "药大人能吃",
     summary: "滑动带路，吃得越多身子越长",
     routeName: "service-greedy-nailong",
     cover: "🐉",

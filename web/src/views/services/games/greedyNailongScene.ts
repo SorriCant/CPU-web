@@ -1,4 +1,4 @@
-// 贪吃奶龙的画面。奶龙的头、身子和吃的各是一张图（src/assets/greedy-nailong），换形象只需要替换图片文件；
+// 药大人能吃的画面。奶龙的头、身子和吃的各是一张图（src/assets/greedy-nailong），换形象只需要替换图片文件；
 // 场地是画出来的。只按引擎状态作画，不改状态。
 import bodyArt from "@/assets/greedy-nailong/body.webp";
 import feastArt from "@/assets/greedy-nailong/feast.webp";
