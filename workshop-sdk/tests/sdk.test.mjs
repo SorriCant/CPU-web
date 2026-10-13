@@ -209,6 +209,19 @@ test("extension SDK routes all capabilities and lifecycle events", async () => {
   }
 });
 
+test("navigation waits for user consent beyond the ordinary RPC timeout", async () => {
+  const host = harness();
+  const sdk = createWorkshopSDK({ timeout: 100, interactionTimeout: 2000 });
+  try {
+    const port = host.connect();
+    port.on("message", (request) => {
+      assert.equal(request.method, "navigation.open");
+      setTimeout(() => port.postMessage({ type: "response", id: request.id, result: null }), 200);
+    });
+    assert.equal(await sdk.openPage("games"), null);
+  } finally { sdk.destroy(); host.dispose(); }
+});
+
 test("local preview cannot impersonate site capabilities", async () => {
   const previous = globalThis.window;
   globalThis.window = {};

@@ -105,6 +105,12 @@ export interface WorkshopAudit {
   reason: string | null;
   createdAt: string;
 }
+export interface WorkshopSaveSummary {
+  workId: string;
+  name: string;
+  bytes: number;
+  updatedAt: string;
+}
 export interface WorkshopListParams {
   q?: string;
   type?: WorkshopType;
@@ -264,7 +270,9 @@ export const workshopApi = {
     ),
   setStorage: (id: string, versionId: string, data: WorkshopStorage) =>
     request.put(`${workPath(id)}/storage`, { versionId, data }, writeOptions),
-  deleteStorage: (id: string, versionId: string) =>
+  savedWorks: (params: { page?: number; pageSize?: number } = {}) =>
+    request.get<WorkshopPage<WorkshopSaveSummary>>("/workshop/storage", params, readOptions),
+  deleteStorage: (id: string, versionId?: string) =>
     request.delete(`${workPath(id)}/storage`, {
       ...writeOptions,
       params: { versionId },

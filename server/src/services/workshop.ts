@@ -1,6 +1,7 @@
 import { Prisma, type PrismaClient, type WorkshopVersion, type WorkshopWork } from "@prisma/client";
 import { prisma } from "../prisma";
 import { Errors } from "../utils/response";
+import { lockWorkshopAuthor } from "./workshopAccountDeletion";
 import type { WorkshopManifest } from "./workshopPackage";
 import {
   assertWorkshopAdmin,
@@ -206,11 +207,15 @@ export async function createWorkshopDraft(
     expectedWorkId?: string;
   },
   viewer: WorkshopViewer,
+  db: Database = prisma,
 ) {
   try {
-    return await prisma.$transaction(async (tx) => {
+    return await db.$transaction(async (tx) => {
       // Per-author lock also makes the aggregate disk quota race safe.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${20261012}::int, ${viewer.userId}::int)`;
+      await lockWorkshopAuthor(tx, viewer.userId);
+      const author = await tx.user.findUnique({ where: { id: viewer.userId }, select: { status: true } });
+      if (!author || ["banned", "deleting", "deleted"].includes(author.status))
+        throw Errors.forbidden("账户已停止访问，无法上传作品");
       if (input.expectedWorkId) {
         const selected = await tx.workshopWork.findUnique({ where: { id: input.expectedWorkId } });
         if (!selected || selected.authorId !== viewer.userId)
@@ -571,10 +576,34 @@ export async function writeWorkshopSave(
     return { saved: true };
   });
 }
-export async function deleteWorkshopSave(id: string, versionId: string, viewer: WorkshopViewer) {
-  return prisma.$transaction(async (tx) => {
-    await lockWork(tx, id);
-    await storageWork(tx, id, versionId);
+export async function listWorkshopSaves(page: WorkshopPage, viewer: WorkshopViewer, db: Database = prisma) {
+  const where = { userId: viewer.userId };
+  const [saves, total] = await db.$transaction([
+    db.workshopSave.findMany({
+      where,
+      select: {
+        workId: true, bytes: true, updatedAt: true,
+        work: { select: { slug: true, publishedVersion: { select: { name: true } } } },
+      },
+      orderBy: [{ updatedAt: "desc" }, { workId: "asc" }],
+      skip: (page.page - 1) * page.pageSize,
+      take: page.pageSize,
+    }),
+    db.workshopSave.count({ where }),
+  ]);
+  return {
+    items: saves.map((save) => ({
+      workId: save.workId, name: save.work.publishedVersion?.name || save.work.slug,
+      bytes: save.bytes, updatedAt: save.updatedAt,
+    })),
+    pagination: workshopPagination(page, total),
+  };
+}
+
+export async function deleteWorkshopSave(id: string, _versionId: string | undefined, viewer: WorkshopViewer, db: Database = prisma) {
+  return db.$transaction(async (tx) => {
+    // Serialize quota release with saves in any work; publication does not govern ownership.
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(${20261013}::int, ${viewer.userId}::int)`;
     await tx.workshopSave.deleteMany({ where: { workId: id, userId: viewer.userId } });
     return { deleted: true };
   });

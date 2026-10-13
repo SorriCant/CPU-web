@@ -85,7 +85,7 @@ iframe 使用 `sandbox="allow-scripts"`，没有 `allow-same-origin`。因此不
 2. 宿主验证 `event.source` 是当前作品 iframe，发送 `{type:"cpu-workshop:connect", protocol:1, appId:<作品 UUID>}`，并转交一个 `MessagePort`。
 3. SDK 同样验证连接消息来自 `window.parent`，之后 RPC 与生命周期消息只走该端口。
 
-握手需要使用 `postMessage(..., "*")`，因为沙箱页面拥有不透明 origin；来源验证与专属端口决定消息归属。SDK 默认请求超时 8 秒，等待用户确认的交互使用较长超时，连接失败会显示错误，不会自动退回拥有更多权限的运行模式。
+握手需要使用 `postMessage(..., "*")`，因为沙箱页面拥有不透明 origin；来源验证与专属端口决定消息归属。SDK 默认请求超时 8 秒，等待用户确认的交互（包括导航）使用较长超时，连接失败会显示错误，不会自动退回拥有更多权限的运行模式。普通能力响应上限为 256 KiB，与单份存档的 64 KiB 上限分别校验。
 
 请求格式为 `{type:"request", id, method, params}`，响应为 `{type:"response", id, result}` 或 `{type:"response", id, error:{code,message}}`。宿主仅接受下面列出的白名单方法。
 
@@ -124,6 +124,10 @@ const unsubscribe = sdk.on("pause", ({ reason }) => pauseEngine(reason));
 ```
 
 每件作品的 JSON 存档最多 64 KiB；账号存档总额为 2 MiB。`getSave`、`setSave`、`removeSave` 和 `updateSave` 在同一个 SDK 实例内按调用顺序执行。`updateSave(value => newValue)` 用于保留整份文档中的其他字段，但不是跨页面数据库事务。一个作品页面应共享一个 SDK 实例，避免多个实例相互覆盖存档；不保存密码、令牌或不必要的个人信息。
+
+登录用户可从工坊首页的“云端存档”入口查看自己的存档并释放额度，包括已下架、已停用或不再声明存档权限的作品。删除只按当前用户与作品 UUID 校验归属，不依赖作品的当前公开版本；读取和写入仍要求有效的公开版本与 `storage` 权限。
+
+账号提交注销时会立即停用其作品、撤销旧运行凭据及扩展位置的运行资格。清理任务删除作者的作品、版本和位置绑定，同时删除该账号在其他作品中的存档、收藏和举报，并去标识化审核记录。删除数据库记录前先收集所有版本的包目录键，与数据库清理一起提交到加密任务载荷；包文件删除失败会保留清单并重试，全部外部清理成功后才标记注销完成。
 
 `createGameShell` 接收 `container`、`sdk`、`title`、`description`、作者提供的 `stage` 元素，以及 `onStart(settings)`、`onPause()`、`onResume()`、`onStop()` 回调。可选 `settings` 数组形如 `{id,label,default}`，当前用于布尔开关。返回 `ready`、只读 `phase`，及 `start/pause/resume/setScore/setStatus/end/destroy`。`end({score,summary})` 显示结果并更新最高分与最近 30 局战绩；记录存在文档的 `gameShell` 字段。作者自己的字段应使用其他键名。
 
@@ -196,4 +200,4 @@ node --test workshop-sdk/tests/*.test.mjs
 npm run type-check --prefix web
 ```
 
-前两项覆盖包路径/大小/实际流式解压、审批权限与版本撤销、存档额度、宿主来源校验和 SDK 通信。新增版本还应以作者账号上传预览、站长审核，再以其他账号和访客打开，检查真实浏览器下的交互和存档隔离。
+前两项覆盖包路径/大小/实际流式解压、审批权限与版本撤销、存档额度和下架存档清理、账号注销、宿主来源校验、SDK 通信和模板生成。正式 Linux 工作流还在隔离的 PostgreSQL `workshop_test` schema 中验证注销后的关系级联、运行凭据与位置撤销、包文件清理失败重试以及其他账号数据保留。新增版本还应以作者账号上传预览、站长审核，再以其他账号和访客打开，检查真实浏览器下的交互和存档隔离。

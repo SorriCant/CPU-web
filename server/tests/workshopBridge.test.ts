@@ -255,6 +255,32 @@ test("declared capability still requires a host handler", async () => {
   }
 });
 
+test("catalog responses can exceed save quota without increasing the save quota", async () => {
+  const catalog = { items: Array.from({ length: 12 }, (_, index) => ({
+    id: String(index), slug: `work-${index}`, name: "作品", description: "药".repeat(2000), type: "tool", version: "1.0.0",
+  })), pagination: { page: 1, pageSize: 12, total: 12, totalPages: 1 } };
+  assert.ok(Buffer.byteLength(JSON.stringify(catalog)) > 64 * 1024);
+  const h = harness(true, {
+    permissions: ["site.public", "storage"],
+    handlers: { listWorks: async () => new Proxy(catalog, {}) },
+  });
+  try {
+    h.hello();
+    assert.deepEqual((await request(h.port!, "site.listWorks", { pageSize: 12 })).result, catalog);
+    assert.match((await request(h.port!, "storage.set", { value: catalog })).error!.message, /64 KB/);
+  } finally { h.close(); }
+});
+
+test("ordinary RPC responses remain bounded", async () => {
+  const h = harness(false, {
+    permissions: ["site.public"], handlers: { getSiteInfo: async () => "x".repeat(256 * 1024) },
+  });
+  try {
+    h.hello();
+    assert.match((await request(h.port!, "site.getInfo")).error!.message, /响应过大/);
+  } finally { h.close(); }
+});
+
 test("close responds before host teardown and shake exposes no raw sensor data", async () => {
   let closeCalled = false;
   const h = harness(false, {

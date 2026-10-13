@@ -1,5 +1,15 @@
 /** Only this allowlisted bridge crosses from an untrusted work into the site. */
 export const WORKSHOP_SAVE_LIMIT = 64 * 1024;
+// A catalog contains up to twelve 2,000-character descriptions plus metadata.
+const WORKSHOP_RESPONSE_LIMIT = 256 * 1024;
+
+function serializeWorkshopResponse(value: unknown): string {
+  const json = JSON.stringify(value);
+  if (json === undefined) throw new Error("能力响应必须是 JSON 数据");
+  if (new TextEncoder().encode(json).length > WORKSHOP_RESPONSE_LIMIT)
+    throw new Error("能力响应过大");
+  return json;
+}
 
 export function serializeWorkshopSave(value: unknown): string {
   let json: string | undefined;
@@ -256,7 +266,7 @@ export function createWorkshopBridge(options: BridgeOptions) {
           const plainResult =
             result === undefined
               ? null
-              : JSON.parse(serializeWorkshopSave(result));
+              : JSON.parse(serializeWorkshopResponse(result));
           if (!disposed) {
             port?.postMessage({
               type: "response",

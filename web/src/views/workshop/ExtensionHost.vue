@@ -48,7 +48,7 @@ const allowed = computed(() =>
     "/home",
     "/services",
     "/services/tools",
-    "/services/games",
+    "/services/tools/games",
     "/workshop",
     "/workshop/develop",
   ].includes(route.path),

@@ -5,6 +5,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scaffold, pack, validateManifest } from "../bin/cli.mjs";
 
+for (const type of ["game", "tool"]) {
+  test(`${type} scaffold creates missing parents and refuses to overwrite existing projects`, async () => {
+    const root = await mkdtemp(join(tmpdir(), "workshop-sdk-test-"));
+    try {
+      const source = await scaffold(type, join(root, "nested", type));
+      const manifest = await readFile(join(source, "manifest.json"), "utf8");
+      assert.equal(JSON.parse(manifest).type, type);
+      assert.ok((await pack(source, join(root, `${type}.zip`))).files >= 5);
+      await assert.rejects(scaffold(type, source), /目标已存在/);
+      assert.equal(await readFile(join(source, "manifest.json"), "utf8"), manifest);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+}
+
 test("generic extension scaffold packs and validates supported slots and permissions", async () => {
   const root = await mkdtemp(join(tmpdir(), "workshop-sdk-test-"));
   try {

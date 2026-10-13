@@ -103,7 +103,7 @@ export function createWorkshopSDK({
     listWorks: (params = {}) => request("site.listWorks", params),
     showToast: (params) => request("ui.toast", params),
     confirm: (params) => request("ui.confirm", params, interactionTimeout),
-    openPage: (target) => request("navigation.open", { target }),
+    openPage: (target) => request("navigation.open", { target }, interactionTimeout),
     requestFullscreen: () =>
       request("fullscreen.request", {}, interactionTimeout),
     close: () => request("runtime.close"),

@@ -328,7 +328,7 @@ async function start() {
           if (seq !== generation) return;
           const destinations = {
             workshop: "/workshop",
-            games: "/services/games",
+            games: "/services/tools/games",
             tools: "/services/tools",
           };
           const result = await requestConsent(

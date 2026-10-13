@@ -23,6 +23,7 @@ import {
   resolveWorkshopReport,
   listWorkshopWorks,
   readWorkshopSave,
+  listWorkshopSaves,
   reportWorkshopWork,
   reviewWorkshopVersion,
   setWorkshopWorkState,
@@ -307,6 +308,13 @@ workshopRouter.post(
 );
 
 workshopRouter.get(
+  "/storage",
+  authRequired,
+  route(async (req, res) =>
+    ok(res, await listWorkshopSaves(auditPageSchema.parse(req.query), req.user!)),
+  ),
+);
+workshopRouter.get(
   "/works/:id/storage",
   authRequired,
   limit("storage-read", 300, 10 * 60 * 1000),
@@ -354,7 +362,7 @@ workshopRouter.delete(
       res,
       await deleteWorkshopSave(
         idSchema.parse(req.params.id),
-        idSchema.parse(req.query.versionId),
+        idSchema.optional().parse(req.query.versionId),
         req.user!,
       ),
     ),

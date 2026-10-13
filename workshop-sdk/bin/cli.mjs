@@ -351,7 +351,7 @@ export async function scaffold(type, destination) {
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
   }
-  await mkdir(target, { recursive: true });
+  await mkdir(dirname(target), { recursive: true });
   await cp(join(sdkRoot, "examples", type), target, {
     recursive: true,
     errorOnExist: true,

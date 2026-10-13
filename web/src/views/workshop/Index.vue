@@ -11,6 +11,7 @@
           <p>发现同学制作的游戏、工具和站点扩展，也把你的创意分享给大家。</p>
         </div>
         <div class="pk-title-actions">
+          <el-button v-if="auth.isLoggedIn" @click="savesOpen = true">云端存档</el-button>
           <router-link class="pk-pill" to="/workshop/mine">作者中心</router-link
           ><router-link
             v-if="auth.user?.role === 'admin'"
@@ -90,6 +91,7 @@
         />
       </div>
     </template>
+    <SaveManager v-if="savesOpen" @close="savesOpen = false" />
   </div>
 </template>
 <script setup lang="ts">
@@ -103,10 +105,12 @@ import {
 } from "@/api/workshop";
 import { useAuthStore } from "@/stores/auth";
 import WorkCard from "./WorkCard.vue";
+import SaveManager from "./SaveManager.vue";
 import { workshopError } from "./shared";
 import "./workshop.css";
 
 const auth = useAuthStore();
+const savesOpen = ref(false);
 const router = useRouter();
 const route = useRoute();
 const search = ref("");
